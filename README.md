@@ -6,6 +6,8 @@ and turns the results into a fast, mobile-friendly wildlife archive.
 
 **Live gallery:** [backyard-birds.ca](https://backyard-birds.ca)
 
+<img width="1118" height="786" alt="image" src="https://github.com/user-attachments/assets/7638639b-9129-4e5f-9124-c6b9c603f6f4" />
+
 The project grew out of an interoperability investigation into an owned B4
 camera. It now runs independently of the UBox app for nightly SD-card media
 retrieval, while keeping the camera and gallery data on the local network.
@@ -27,6 +29,9 @@ retrieval, while keeping the camera and gallery data on the local network.
 - Includes systemd services for downloading, classifying, backing up, and
   serving the gallery unattended on a Raspberry Pi.
 - Uses only the Python standard library for the core application.
+
+<img width="1301" height="827" alt="image" src="https://github.com/user-attachments/assets/9ab036c2-49ab-4f7e-bc85-0add8d157735" />
+
 
 ## How it works
 
