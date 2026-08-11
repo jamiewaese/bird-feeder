@@ -311,6 +311,8 @@ class AboutPageTests(unittest.TestCase):
         self.assertIn("data-future-feeder-photo", page)
         self.assertIn("data-future-pi-photo", page)
         self.assertIn("subscription of about $70 a year", page)
+        self.assertIn("but that’s so old school", page)
+        self.assertIn("but he thinks everything is a great idea", page)
         self.assertIn("waits 30 seconds before the next one", page)
         self.assertIn("manufacturer’s Android transport library", page)
         self.assertNotIn("fair amount of stubbornness", page)

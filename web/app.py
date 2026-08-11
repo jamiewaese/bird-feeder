@@ -1779,9 +1779,10 @@ __SHARED_STYLES__
 
         <h3>The subscription</h3>
         <p>What wasn’t made clear up front was that downloading the photos to my phone required a subscription of about $70 a year. I thought that was a lot to pay for access to files already stored on a camera I owned.</p>
+        <p>Sure, I could also remove the microSD card from the camera every couple of days and copy the images manually, but that’s so old school.</p>
 
         <h3>Using an old Raspberry Pi</h3>
-        <p>I had a Raspberry Pi 3 that was about ten years old. I asked Codex whether we could use it to log into the camera every night, copy the files from the SD card, send an image from each recording to OpenAI for identification, and show the results in a web gallery.</p>
+        <p>I had a Raspberry Pi 3 that was about ten years old. I asked Codex whether we could use it to log into the camera every night, copy the files from the SD card, send an image from each recording to OpenAI for identification, and show the results in a web gallery. He thought it was a great idea, but he thinks everything is a great idea.</p>
 
         <h3>Getting files off the camera</h3>
         <p>This was the difficult part. The camera has no public API and it doesn’t provide a normal web, FTP, RTSP, or ONVIF interface. The app finds it over the local network and then communicates using a proprietary UDP protocol. The packet data looked encrypted or heavily obfuscated.</p>
