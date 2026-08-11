@@ -1,0 +1,43 @@
+[Unit]
+Description=Local B4 bird-feeder media gallery
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=birdgallery
+Group=birdfeeder
+WorkingDirectory=/opt/bird-feeder
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m web.app --library /srv/bird-feeder --host 127.0.0.1 --port 8080 --allowed-host 127.0.0.1 --allowed-host localhost --allowed-host 192.168.1.20 --allowed-host bird-feeder-pi.local
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RemoveIPC=true
+UMask=0007
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadWritePaths=/srv/bird-feeder
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+.env
+*.env
+!*.env.example
+recon-output/
+captures/
+library/
+backups/
+camera/ubox_native/liblog.so
+camera/ubox_native/ubox-probe
+camera/ubox_native/ubox-connect

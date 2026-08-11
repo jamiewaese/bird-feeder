@@ -1,0 +1,11 @@
+[Unit]
+Description=Download UBox SD-card media every night
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=bird-feeder-ubox-download.service
+
+[Install]
+WantedBy=timers.target

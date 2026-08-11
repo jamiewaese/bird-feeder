@@ -1,0 +1,37 @@
+[Unit]
+Description=Back up Bird Feeder gallery to external storage
+ConditionPathIsMountPoint=/mnt/bird-feeder-backup
+After=local-fs.target bird-feeder-gallery.service
+
+[Service]
+Type=oneshot
+User=birdbackup
+Group=birdfeeder
+WorkingDirectory=/opt/bird-feeder
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m python_tools.backup_library --library /srv/bird-feeder --destination /mnt/bird-feeder-backup/archive --require-mount /mnt/bird-feeder-backup
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RemoveIPC=true
+UMask=0077
+ReadOnlyPaths=/srv/bird-feeder
+ReadWritePaths=/mnt/bird-feeder-backup

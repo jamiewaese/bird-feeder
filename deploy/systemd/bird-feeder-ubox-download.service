@@ -1,0 +1,45 @@
+[Unit]
+Description=Download recent UBox SD-card media over the LAN
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=uboxdownloader
+Group=uboxdownloader
+SupplementaryGroups=birdfeeder
+WorkingDirectory=/opt/bird-feeder
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/bird-feeder/ubox.env
+ExecStart=/usr/bin/python3 -m python_tools.download_ubox --library /srv/bird-feeder --native-dir /opt/bird-feeder/vendor/ubox --camera-id yard --lookback-hours 36
+# Run even when one UBox transfer is incomplete and ExecStart reports failure;
+# already-imported clips must still receive phone-compatible share copies.
+ExecStopPost=/usr/bin/python3 -m python_tools.prepare_mobile_videos --library /srv/bird-feeder
+TimeoutStartSec=3h
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RemoveIPC=true
+UMask=0007
+ReadWritePaths=/srv/bird-feeder
+
+[Install]
+WantedBy=multi-user.target

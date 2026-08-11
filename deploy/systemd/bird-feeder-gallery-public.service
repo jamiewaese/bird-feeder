@@ -1,0 +1,48 @@
+[Unit]
+Description=Public B4 bird-feeder gallery with star reactions
+After=network-online.target bird-feeder-gallery.service
+Wants=network-online.target
+Requires=bird-feeder-gallery.service
+
+[Service]
+Type=simple
+User=birdpublic
+Group=birdfeeder
+WorkingDirectory=/opt/bird-feeder
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/bird-feeder/public-gallery.env
+ExecStartPre=/usr/bin/test -r /srv/bird-feeder/catalog.sqlite3
+ExecStartPre=/usr/bin/test -w /srv/bird-feeder/catalog.sqlite3
+ExecStartPre=/usr/bin/test -w /srv/bird-feeder
+ExecStart=/usr/bin/python3 -m web.app --library /srv/bird-feeder --host 127.0.0.1 --port 8081 --allowed-host ${BIRD_FEEDER_PUBLIC_HOST} --public-read-only
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RemoveIPC=true
+UMask=0007
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadWritePaths=/srv/bird-feeder
+
+[Install]
+WantedBy=multi-user.target

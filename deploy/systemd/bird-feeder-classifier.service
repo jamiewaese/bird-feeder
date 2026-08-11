@@ -1,0 +1,37 @@
+[Unit]
+Description=Bounded bird-species classification batch
+After=network-online.target bird-feeder-ubox-download.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=birdclassifier
+Group=birdfeeder
+WorkingDirectory=/opt/bird-feeder
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/bird-feeder/openai.env
+ExecStart=/usr/bin/python3 -m python_tools.classify_birds --library /srv/bird-feeder --execute --max-images 100 --monthly-image-limit 1000 --monthly-budget-usd 10.00 --request-cost-reserve-usd 0.01 --max-image-bytes 4194304 --max-output-tokens 512 --paired-only --location "Toronto, Ontario, Canada"
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RemoveIPC=true
+UMask=0007
+ReadWritePaths=/srv/bird-feeder

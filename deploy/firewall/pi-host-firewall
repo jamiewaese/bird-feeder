@@ -1,0 +1,57 @@
+#!/bin/sh
+set -eu
+
+IPT=/usr/sbin/iptables
+IP6T=/usr/sbin/ip6tables
+LAN_INTERFACE=wlan0
+LAN_V4=192.168.1.0/24
+
+ensure_jump() {
+    tool=$1
+    parent=$2
+    child=$3
+    "$tool" -w -C "$parent" -j "$child" 2>/dev/null || \
+        "$tool" -w -I "$parent" 1 -j "$child"
+}
+
+reset_chain() {
+    tool=$1
+    chain=$2
+    "$tool" -w -N "$chain" 2>/dev/null || true
+    "$tool" -w -F "$chain"
+}
+
+reset_chain "$IPT" BF-INPUT
+ensure_jump "$IPT" INPUT BF-INPUT
+"$IPT" -w -A BF-INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+"$IPT" -w -A BF-INPUT -i lo -j ACCEPT
+"$IPT" -w -A BF-INPUT -i "$LAN_INTERFACE" -s "$LAN_V4" -p tcp \
+    -m multiport --dports 22,80,443 -j ACCEPT
+"$IPT" -w -A BF-INPUT -i "$LAN_INTERFACE" -s "$LAN_V4" -p udp \
+    --dport 5353 -j ACCEPT
+"$IPT" -w -A BF-INPUT -i "$LAN_INTERFACE" -p udp --sport 67 --dport 68 -j ACCEPT
+"$IPT" -w -A BF-INPUT -i "$LAN_INTERFACE" -p icmp -j ACCEPT
+"$IPT" -w -A BF-INPUT -i "$LAN_INTERFACE" -j DROP
+"$IPT" -w -A BF-INPUT -j RETURN
+
+reset_chain "$IPT" BF-DOCKER
+ensure_jump "$IPT" DOCKER-USER BF-DOCKER
+"$IPT" -w -A BF-DOCKER -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+"$IPT" -w -A BF-DOCKER -i "$LAN_INTERFACE" -s "$LAN_V4" -p tcp \
+    --dport 2300 -j ACCEPT
+"$IPT" -w -A BF-DOCKER -i "$LAN_INTERFACE" -j DROP
+"$IPT" -w -A BF-DOCKER -j RETURN
+
+reset_chain "$IP6T" BF6-INPUT
+ensure_jump "$IP6T" INPUT BF6-INPUT
+"$IP6T" -w -A BF6-INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+"$IP6T" -w -A BF6-INPUT -i lo -j ACCEPT
+"$IP6T" -w -A BF6-INPUT -i "$LAN_INTERFACE" -s fd00::/8 -p tcp \
+    -m multiport --dports 22,80,443,2300 -j ACCEPT
+"$IP6T" -w -A BF6-INPUT -i "$LAN_INTERFACE" -s fe80::/10 -p tcp \
+    -m multiport --dports 22,80,443,2300 -j ACCEPT
+"$IP6T" -w -A BF6-INPUT -i "$LAN_INTERFACE" -p udp --dport 5353 -j ACCEPT
+"$IP6T" -w -A BF6-INPUT -i "$LAN_INTERFACE" -p udp --sport 547 --dport 546 -j ACCEPT
+"$IP6T" -w -A BF6-INPUT -i "$LAN_INTERFACE" -p ipv6-icmp -j ACCEPT
+"$IP6T" -w -A BF6-INPUT -i "$LAN_INTERFACE" -j DROP
+"$IP6T" -w -A BF6-INPUT -j RETURN

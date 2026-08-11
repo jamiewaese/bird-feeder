@@ -1,0 +1,14 @@
+[Unit]
+Description=LAN-scoped firewall for Bird Feeder and Terminus
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pi-host-firewall
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target
