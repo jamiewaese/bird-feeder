@@ -1615,15 +1615,20 @@ def _shared_styles() -> str:
 """
 
 
-def _render_about(*, photo_available: bool = False) -> bytes:
+def _render_about(
+    *,
+    photo_available: bool = False,
+    pi_photo_available: bool = False,
+    amazon_photo_available: bool = False,
+) -> bytes:
     """Render the public project story and a plain-language system overview."""
-    photo = (
+    feeder_photo = (
         '<img src="/about-feeder.jpg" '
-        'alt="The Backyard Birds camera feeder viewed from another angle">'
+        'alt="The Backyard Birds camera feeder mounted on a pole in the garden">'
         if photo_available
         else """
-        <div class="photo-placeholder" data-future-photo role="img"
-          aria-label="Placeholder for a future photo of the bird feeder from another angle">
+        <div class="photo-placeholder" data-future-feeder-photo role="img"
+          aria-label="Placeholder for a future photo of the bird feeder">
           <svg viewBox="0 0 520 350" aria-hidden="true">
             <path d="M260 42v48M180 105h160l-24 62H204z" />
             <path d="M212 167v92h96v-92M191 259h138M235 259v48M285 259v48" />
@@ -1631,10 +1636,38 @@ def _render_about(*, photo_available: bool = False) -> bytes:
             <path d="M320 205c36-32 74-19 78 14-23 5-48 0-67-14M352 204l13-18" />
             <path class="ground" d="M82 308c94-17 276-17 356 0" />
           </svg>
-          <span>Alternate view coming soon</span>
-          <small>A new photo will be added here when it’s ready.</small>
+          <span>Feeder photo coming soon</span>
+          <small>A photo will be added here when it’s ready.</small>
         </div>
         """
+    )
+    pi_photo = (
+        '<img src="/about-raspberry-pi.jpg" '
+        'alt="The Raspberry Pi 3 running Backyard Birds beside its USB backup drive and network cables">'
+        if pi_photo_available
+        else """
+        <div class="photo-placeholder" data-future-pi-photo role="img"
+          aria-label="Placeholder for a future photo of the Raspberry Pi running Backyard Birds">
+          <svg viewBox="0 0 520 350" aria-hidden="true">
+            <rect x="124" y="78" width="272" height="184" rx="26" />
+            <rect x="158" y="112" width="91" height="72" rx="8" />
+            <circle cx="326" cy="134" r="23" />
+            <path d="M311 134h30M326 119v30M171 219h110M301 219h45" />
+            <path d="M396 128h37v38h-37M396 190h53v42h-53" />
+            <path d="M169 78V52M205 78V52M241 78V52" />
+            <path d="M216 291c24-27 64-27 88 0M238 309c12-13 32-13 44 0M258 326h2" />
+            <path class="ground" d="M83 334h354" />
+          </svg>
+          <span>Basement Pi photo coming soon</span>
+          <small>The hardware portrait will drop into this space.</small>
+        </div>
+        """
+    )
+    amazon_photo = (
+        '<img src="/about-amazon.png" '
+        'alt="Amazon Canada search results for camera bird feeders">'
+        if amazon_photo_available
+        else ""
     )
 
     document = """<!doctype html>
@@ -1649,19 +1682,20 @@ def _render_about(*, photo_available: bool = False) -> bytes:
 __SHARED_STYLES__
     .about-nav { max-width: 1180px; margin: 0 auto; padding: 22px 28px 0; }
     .about-shell { width: min(1180px, 100%); margin: 0 auto; padding: 36px 28px 80px; }
-    .about-hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(310px, .75fr); gap: 54px; align-items: end; padding: 38px 0 62px; border-bottom: 1px solid rgb(23 54 43 / 12%); }
-    .about-hero h1 { max-width: 800px; margin: 10px 0 22px; font-size: clamp(3.3rem, 8vw, 7.3rem); font-weight: 820; letter-spacing: -.065em; line-height: .87; }
-    .about-intro { max-width: 730px; margin: 0; color: #415b51; font-family: Georgia, "Times New Roman", serif; font-size: clamp(1.28rem, 2.3vw, 1.75rem); line-height: 1.46; }
-    .hero-note { margin: 0 0 5px; padding: 22px 24px; border-left: 3px solid var(--leaf); color: var(--muted); background: rgb(229 240 232 / 65%); font-size: .92rem; line-height: 1.6; }
-    .story-grid { display: grid; grid-template-columns: minmax(0, .68fr) minmax(0, 1.32fr); gap: 54px; padding: 72px 0; }
+    .about-hero { max-width: 860px; padding: 38px 0 58px; border-bottom: 1px solid rgb(23 54 43 / 12%); }
+    .about-hero h1 { margin: 8px 0 20px; font-size: clamp(3rem, 6vw, 5.4rem); font-weight: 800; letter-spacing: -.045em; line-height: .96; }
+    .about-intro { max-width: 760px; margin: 0; color: #415b51; font-size: clamp(1.08rem, 2vw, 1.35rem); line-height: 1.6; }
+    .story-grid { display: grid; grid-template-columns: minmax(190px, .55fr) minmax(0, 1.45fr); gap: 56px; padding: 64px 0 72px; }
     .section-label { margin: 0; color: var(--leaf); font-size: .76rem; font-weight: 800; text-transform: uppercase; }
-    .story-grid h2, .diagram-heading h2, .links-copy h2 { margin: 8px 0 0; font-size: clamp(2rem, 4vw, 3.35rem); line-height: 1; }
-    .story-copy { max-width: 690px; color: #344d43; font-family: Georgia, "Times New Roman", serif; font-size: 1.13rem; line-height: 1.76; }
+    .story-grid h2, .diagram-heading h2, .resources-heading h2 { margin: 8px 0 0; font-size: clamp(1.9rem, 3.4vw, 3rem); line-height: 1.05; }
+    .story-copy { max-width: 720px; color: #344d43; font-size: 1.04rem; line-height: 1.72; }
     .story-copy p { margin: 0 0 1.35em; }
-    .story-copy p:first-child::first-letter { float: left; margin: .08em .1em 0 0; color: var(--leaf-dark); font-size: 4.2rem; font-weight: 700; line-height: .72; }
+    .story-copy h3 { margin: 2em 0 .5em; color: var(--leaf-dark); font-size: 1.22rem; line-height: 1.25; }
+    .story-copy h3:first-child { margin-top: 0; }
     .photo-block { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(260px, .7fr); gap: 26px; align-items: stretch; margin-bottom: 76px; }
-    .photo-block figure { min-height: 420px; overflow: hidden; margin: 0; border-radius: 26px; background: #dce7dd; box-shadow: var(--shadow); }
-    .photo-block figure > img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .photo-block-reverse { grid-template-columns: minmax(260px, .7fr) minmax(0, 1.3fr); }
+    .photo-block figure { min-height: 420px; aspect-ratio: 4 / 3; overflow: hidden; margin: 0; border-radius: 26px; background: #dce7dd; box-shadow: var(--shadow); }
+    .photo-block figure > img { width: 100%; height: 100%; display: block; object-fit: cover; object-position: center; }
     .photo-placeholder { height: 100%; min-height: 420px; display: grid; place-content: center; justify-items: center; padding: 30px; color: var(--leaf-dark); background: radial-gradient(circle at 50% 20%, #eff5ed, #dce7dd 70%); text-align: center; }
     .photo-placeholder svg { width: min(420px, 86%); fill: none; stroke: #668476; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
     .photo-placeholder .ground { stroke: #99ad9f; stroke-width: 3; }
@@ -1671,45 +1705,54 @@ __SHARED_STYLES__
     .photo-caption strong { font-size: 1.5rem; line-height: 1.12; }
     .photo-caption p { margin: 12px 0 0; color: var(--muted); line-height: 1.58; }
     .diagram-section { margin: 0 0 76px; padding: 42px; overflow: hidden; border-radius: 30px; color: #f8fff9; background: #123f30; box-shadow: 0 24px 60px rgb(15 43 32 / 18%); }
-    .diagram-heading { display: flex; gap: 30px; align-items: end; justify-content: space-between; margin-bottom: 34px; }
+    .diagram-heading { max-width: 700px; margin-bottom: 34px; }
     .diagram-heading .section-label { color: #9fd3b8; }
-    .diagram-heading p:last-child { max-width: 430px; margin: 0; color: #c4d9ce; }
-    .system-diagram { width: 100%; height: auto; display: block; }
-    .system-diagram .node { fill: #f9fbf5; stroke: #a9d1bc; stroke-width: 2; }
-    .system-diagram .pi-node { fill: #dff0e5; stroke: #89c7a7; }
-    .system-diagram .node-title { fill: #123f30; font-size: 19px; font-weight: 800; }
-    .system-diagram .node-copy { fill: #4d675c; font-size: 13px; }
-    .system-diagram .step { fill: #9fd3b8; font-size: 12px; font-weight: 800; text-transform: uppercase; }
-    .system-diagram .connector { fill: none; stroke: #9fd3b8; stroke-width: 3; stroke-linecap: round; }
-    .system-diagram .icon { fill: none; stroke: #247956; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-    .diagram-caption { margin: 24px 0 0; color: #c4d9ce; font-size: .88rem; text-align: center; }
-    .links-panel { display: grid; grid-template-columns: minmax(0, .72fr) minmax(0, 1.28fr); gap: 54px; align-items: start; padding-top: 6px; }
-    .link-list { display: grid; gap: 12px; }
+    .diagram-heading p:last-child { max-width: 620px; margin: 14px 0 0; color: #c4d9ce; }
+    .process-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px; }
+    .process-card { position: relative; min-width: 0; border: 1px solid #a9d1bc; border-radius: 18px; padding: 20px; color: var(--ink); background: #f9fbf5; }
+    .process-card::after { position: absolute; top: 50%; right: -18px; color: #9fd3b8; content: "→"; font-size: 1.5rem; font-weight: 800; transform: translateY(-50%); }
+    .process-card:last-child::after { content: none; }
+    .process-step { display: block; margin-bottom: 14px; color: var(--leaf); font-size: .72rem; font-weight: 800; text-transform: uppercase; }
+    .process-card h3 { margin: 0 0 9px; color: var(--leaf-dark); font-size: 1.12rem; line-height: 1.18; }
+    .process-card p { margin: 0; color: #4d675c; font-size: .84rem; line-height: 1.48; }
+    .process-tag { display: inline-block; margin-top: 14px; border-radius: 999px; padding: 5px 9px; color: var(--leaf-dark); background: var(--leaf-pale); font-size: .7rem; font-weight: 750; }
+    .diagram-caption { max-width: 760px; margin: 26px 0 0; color: #c4d9ce; font-size: .86rem; }
+    .resources { margin-top: 4px; }
+    .resources-heading { max-width: 650px; margin-bottom: 22px; }
+    .amazon-panel { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(280px, .85fr); gap: 26px; align-items: stretch; margin-bottom: 30px; }
+    .amazon-shot { min-height: 300px; overflow: hidden; border: 1px solid rgb(23 54 43 / 12%); border-radius: 20px; background: #ece9df; box-shadow: var(--shadow); }
+    .amazon-shot:empty { display: none; }
+    .amazon-shot img { width: 100%; height: 100%; display: block; object-fit: cover; object-position: top; }
+    .amazon-copy { display: flex; flex-direction: column; justify-content: center; padding: 28px; border: 1px solid rgb(23 54 43 / 10%); border-radius: 20px; background: var(--card); }
+    .amazon-copy h3 { margin: 0; font-size: 1.45rem; line-height: 1.16; }
+    .amazon-copy p { margin: 12px 0 0; color: var(--muted); }
+    .amazon-copy .resource-link { margin-top: 20px; }
+    .affiliate-note { font-size: .82rem; }
+    .link-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
     .resource-link { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: center; padding: 22px 24px; border: 1px solid rgb(23 54 43 / 12%); border-radius: 18px; color: var(--ink); background: var(--card); box-shadow: 0 10px 30px rgb(27 58 46 / 6%); text-decoration: none; transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease; }
     .resource-link:hover { border-color: var(--leaf); transform: translateY(-2px); box-shadow: 0 16px 38px rgb(27 58 46 / 12%); }
     .resource-link strong { display: block; font-size: 1.08rem; }
     .resource-link small { display: block; margin-top: 4px; color: var(--muted); }
-    .resource-link > span { color: var(--leaf); font-size: 1.55rem; }
+    .resource-link > span:last-child { color: var(--leaf); font-size: 1.55rem; }
     .about-footer { display: flex; gap: 18px; justify-content: space-between; margin-top: 72px; padding-top: 22px; border-top: 1px solid rgb(23 54 43 / 12%); color: var(--muted); font-size: .88rem; }
     @media (max-width: 820px) {
-      .about-hero, .story-grid, .photo-block, .links-panel { grid-template-columns: 1fr; gap: 30px; }
-      .about-hero { align-items: start; }
-      .hero-note { max-width: 560px; }
+      .story-grid, .photo-block, .amazon-panel { grid-template-columns: 1fr; gap: 30px; }
+      .photo-block-reverse figure { order: -1; }
       .photo-caption { min-height: 210px; }
       .diagram-section { padding: 30px 22px; }
-      .diagram-heading { display: block; }
-      .diagram-heading p:last-child { margin-top: 15px; }
+      .process-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .process-card::after { content: none; }
     }
     @media (max-width: 600px) {
       .about-nav { padding: 18px 16px 0; }
       .about-shell { padding: 20px 16px 52px; }
       .about-hero { padding: 22px 0 46px; }
-      .about-hero h1 { font-size: clamp(3rem, 18vw, 4.9rem); }
+      .about-hero h1 { font-size: clamp(2.7rem, 13vw, 3.6rem); }
       .story-grid { padding: 48px 0; }
       .photo-block, .diagram-section { margin-bottom: 52px; }
       .photo-block figure, .photo-placeholder { min-height: 330px; }
-      .diagram-scroll { overflow-x: auto; margin-inline: -8px; padding: 0 8px 10px; }
-      .system-diagram { width: 850px; max-width: none; }
+      .process-grid, .link-list { grid-template-columns: 1fr; }
+      .amazon-shot { min-height: 240px; }
       .about-footer { display: grid; }
     }
   </style>
@@ -1720,34 +1763,50 @@ __SHARED_STYLES__
   </nav>
   <main class="about-shell">
     <header class="about-hero">
-      <div>
-        <p class="eyebrow">Behind the feeder</p>
-        <h1>A small camera with a very busy view.</h1>
-        <p class="about-intro">Backyard Birds is a home-built way to collect, identify, and share the fleeting visitors to one Toronto bird feeder—without letting the best moments disappear inside a camera app.</p>
-      </div>
-      <p class="hero-note">Part wildlife journal, part tiny home server, and part experiment in making an off-the-shelf camera truly my own.</p>
+      <p class="eyebrow">About this project</p>
+      <h1>About Backyard Birds</h1>
+      <p class="about-intro">My brother gave me a bird feeder camera for my birthday. I liked the camera, but I didn’t want to pay $70 a year to download its photos. This site is the result.</p>
     </header>
 
     <section class="story-grid" aria-labelledby="story-title">
       <div>
-        <p class="section-label">The story</p>
+        <p class="section-label">The project</p>
         <h2 id="story-title">Why I built it</h2>
       </div>
       <div class="story-copy">
-        <p>It started with a simple wish: to see who was stopping by the feeder when nobody was looking. The B4 camera could capture those visits, but getting the recordings out of its companion app—and into a place I could keep, browse, and share—was another matter.</p>
-        <p>So I began carefully mapping how my own camera worked. I learned how it announced itself on the local network, how it described recordings on its memory card, and how to retrieve those files directly. That research became a small, independent pipeline running on a Raspberry Pi.</p>
-        <p>Now each visit can move from the feeder to a private archive automatically. A classifier adds a best guess at the species, the gallery makes clips pleasant to browse on a phone, and the moments worth keeping can be starred or shared. The goal is modest: fewer menus, more birds.</p>
+        <h3>The camera</h3>
+        <p>My brother gave me this bird feeder camera for my birthday. It isn’t a name brand, but it’s a good idea: when a bird lands at the feeder, the camera saves a photo and a short video to its microSD card. The app also includes species classification.</p>
+
+        <h3>The subscription</h3>
+        <p>What wasn’t made clear up front was that downloading the photos to my phone required a subscription of about $70 a year. I thought that was a lot to pay for access to files already stored on a camera I owned.</p>
+
+        <h3>Using an old Raspberry Pi</h3>
+        <p>I had a Raspberry Pi 3 that was about ten years old. I asked Codex whether we could use it to log into the camera every night, copy the files from the SD card, send an image from each recording to OpenAI for identification, and show the results in a web gallery.</p>
+
+        <h3>Getting files off the camera</h3>
+        <p>This was the difficult part. The camera has no public API and it doesn’t provide a normal web, FTP, RTSP, or ONVIF interface. The app finds it over the local network and then communicates using a proprietary UDP protocol. The packet data looked encrypted or heavily obfuscated.</p>
+        <p>The files on the SD card turned out to be normal JPEGs and MP4s. We did not decrypt the network protocol ourselves. We adapted the manufacturer’s Android transport library so it could establish a session on the Pi, then wrote the code that lists events, requests files, validates chunks, retries missing data, and imports complete files into the archive.</p>
+
+        <h3>What happens each night</h3>
+        <p>The downloader starts at 2:30 a.m. and checks the previous 36 hours. The camera was unreliable if we tried to move too much in one connection, so the Pi opens a new authenticated session for every JPEG and MP4, downloads one file at a time, and waits 30 seconds before the next one. A failed file gets up to three attempts. Files arrive in 1,200-byte chunks; the downloader checks offsets and lengths and asks for missing chunks again.</p>
+        <p>At 6:00 a.m., another job sends the still image paired with each new video to OpenAI. It asks for a species identification and a short fact. The gallery then shows the video, identification, fact, stars, and the summary charts at the top of the page.</p>
+
+        <h3>The server</h3>
+        <p>This website runs on the same Raspberry Pi 3 in my basement. It connects to the camera and router over Wi-Fi, uses an old iPad charger for power, and backs up the archive to a USB key.</p>
+
+        <h3>Why I’m sharing it</h3>
+        <p>I built this mostly because I was annoyed at being asked to pay $70 every year to download photos from a camera I already owned. It has also been a fun project. I’m putting the code online in case anyone else wants to do something similar.</p>
       </div>
     </section>
 
     <section class="photo-block" aria-labelledby="feeder-photo-title">
       <figure>
-        __PHOTO__
+        __FEEDER_PHOTO__
       </figure>
       <div class="photo-caption">
         <p class="section-label">In the backyard</p>
-        <strong id="feeder-photo-title">The camera feeder itself</strong>
-        <p>This space is reserved for another look at the physical setup. Once the photo is supplied, it can drop in without changing the page layout.</p>
+        <strong id="feeder-photo-title">The bird feeder camera</strong>
+        <p>The camera is mounted on a pole in the backyard. It saves a JPEG and MP4 for each visit to its microSD card.</p>
       </div>
     </section>
 
@@ -1755,68 +1814,65 @@ __SHARED_STYLES__
       <div class="diagram-heading">
         <div>
           <p class="section-label">Under the hood</p>
-          <h2 id="diagram-title">How a visit becomes a clip</h2>
+          <h2 id="diagram-title">How it works</h2>
         </div>
-        <p>The camera stays focused on capturing. The Pi handles retrieval, organization, identification, and the gallery.</p>
+        <p>The camera records each visit. The Raspberry Pi collects and organizes the files, sends an image for identification, and runs the website.</p>
       </div>
-      <div class="diagram-scroll">
-        <svg class="system-diagram" viewBox="0 0 1040 330" role="img" aria-labelledby="diagram-svg-title diagram-svg-description">
-          <title id="diagram-svg-title">Backyard Birds technical workflow</title>
-          <desc id="diagram-svg-description">A camera detects a feeder visit and saves a photo and video. A Raspberry Pi retrieves the media over the local Wi-Fi network, imports and identifies it, then serves the gallery to a phone or web browser.</desc>
-          <defs>
-            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="#9fd3b8" />
-            </marker>
-          </defs>
-          <text class="step" x="18" y="26">01 · Capture</text>
-          <rect class="node" x="18" y="42" width="220" height="198" rx="24" />
-          <path class="icon" d="M77 91h54l11 15v47H65v-47zM83 91l8-15h27l8 15M104 119a14 14 0 1 0 0 .1" />
-          <text class="node-title" x="46" y="187">B4 feeder camera</text>
-          <text class="node-copy" x="46" y="212">Motion creates a snapshot</text>
-          <text class="node-copy" x="46" y="230">and a short MP4 on microSD.</text>
-
-          <path class="connector" d="M238 141H295" marker-end="url(#arrow)" />
-          <text class="step" x="279" y="121">Local Wi-Fi</text>
-
-          <text class="step" x="316" y="26">02 · Retrieve &amp; understand</text>
-          <rect class="node pi-node" x="316" y="42" width="390" height="198" rx="24" />
-          <rect class="icon" x="349" y="77" width="55" height="74" rx="8" />
-          <circle class="icon" cx="365" cy="96" r="5" />
-          <circle class="icon" cx="389" cy="96" r="5" />
-          <path class="icon" d="M363 130h27M376 151v17" />
-          <text class="node-title" x="432" y="91">Raspberry Pi</text>
-          <text class="node-copy" x="432" y="116">Nightly downloader → media importer</text>
-          <text class="node-copy" x="432" y="138">→ SQLite catalog → bird classifier</text>
-          <path d="M348 183h326" stroke="#b4d4c2" stroke-width="1" />
-          <text class="node-copy" x="348" y="211">128 GB local archive · prepared phone-friendly video</text>
-
-          <path class="connector" d="M706 141H763" marker-end="url(#arrow)" />
-          <text class="step" x="717" y="121">Web</text>
-
-          <text class="step" x="784" y="26">03 · Browse</text>
-          <rect class="node" x="784" y="42" width="238" height="198" rx="24" />
-          <rect class="icon" x="826" y="75" width="66" height="99" rx="10" />
-          <path class="icon" d="M842 92h34M842 108h34M842 124h19M851 157h16" />
-          <text class="node-title" x="919" y="93" text-anchor="middle">Gallery</text>
-          <text class="node-copy" x="919" y="119" text-anchor="middle">Watch, filter, star,</text>
-          <text class="node-copy" x="919" y="137" text-anchor="middle">and share from a phone.</text>
-
-          <path class="connector" d="M511 240v48H903v-48" marker-end="url(#arrow)" />
-          <text class="step" x="622" y="310">Cloudflare Tunnel for the public gallery</text>
-        </svg>
+      <div class="process-grid" role="list" aria-label="How the system works">
+        <article class="process-card" role="listitem">
+          <span class="process-step">1 · Camera</span>
+          <h3>Save the visit</h3>
+          <p>The feeder writes a JPEG and MP4 to its microSD card.</p>
+        </article>
+        <article class="process-card" role="listitem">
+          <span class="process-step">2 · 2:30 a.m.</span>
+          <h3>Download the files</h3>
+          <p>The Pi opens one session per file, checks every chunk, and waits 30 seconds between transfers.</p>
+          <span class="process-tag">USB key backup</span>
+        </article>
+        <article class="process-card" role="listitem">
+          <span class="process-step">3 · 6:00 a.m.</span>
+          <h3>Identify the bird</h3>
+          <p>OpenAI receives the paired still image and returns a species name and short fact.</p>
+        </article>
+        <article class="process-card" role="listitem">
+          <span class="process-step">4 · Website</span>
+          <h3>Show the results</h3>
+          <p>The same Pi serves the videos, identifications, stars, filters, and species charts.</p>
+          <span class="process-tag">Cloudflare Tunnel → browser</span>
+        </article>
       </div>
-      <p class="diagram-caption">Administrative tools stay on the trusted home network; the public gallery exposes only the viewing and starring experience.</p>
+      <p class="diagram-caption">The gallery still runs on the basement Pi; Cloudflare Tunnel provides its public route without opening a router port. Administrative tools stay on the trusted home network.</p>
     </section>
 
-    <section class="links-panel" aria-labelledby="links-title">
-      <div class="links-copy">
-        <p class="section-label">Keep exploring</p>
-        <h2 id="links-title">Feeder, code, and the live birds</h2>
+    <section class="photo-block photo-block-reverse" aria-labelledby="pi-photo-title">
+      <div class="photo-caption">
+        <p class="section-label">In the basement</p>
+        <strong id="pi-photo-title">The Raspberry Pi 3</strong>
+        <p>The Pi is in the basement, connected over Wi-Fi and powered by an old iPad charger. The red USB key is used for backups.</p>
+      </div>
+      <figure>
+        __PI_PHOTO__
+      </figure>
+    </section>
+
+    <section class="resources" aria-labelledby="links-title">
+      <div class="resources-heading">
+        <p class="section-label">Similar products</p>
+        <h2 id="links-title">Camera bird feeders</h2>
+      </div>
+      <div class="amazon-panel">
+        <div class="amazon-shot">__AMAZON_PHOTO__</div>
+        <div class="amazon-copy">
+          <h3>Similar feeders on Amazon</h3>
+          <p>There are many cameras like this sold under different names. This search shows the general type of feeder I’m using.</p>
+          <p class="affiliate-note">This isn’t an affiliate link. I don’t get paid or receive anything if you buy one.</p>
+          <a class="resource-link" href="__AMAZON_URL__" target="_blank" rel="noopener noreferrer">
+            <span><strong>Search Amazon Canada</strong><small>See similar camera bird feeders.</small></span><span aria-hidden="true">↗</span>
+          </a>
+        </div>
       </div>
       <div class="link-list">
-        <a class="resource-link" href="__AMAZON_URL__" target="_blank" rel="noopener noreferrer">
-          <span><strong>See similar camera bird feeders</strong><small>Browse comparable smart feeders on Amazon Canada.</small></span><span aria-hidden="true">↗</span>
-        </a>
         <a class="resource-link" href="__GITHUB_URL__" target="_blank" rel="noopener noreferrer">
           <span><strong>Follow the project on GitHub</strong><small>The source code will live here as the project grows.</small></span><span aria-hidden="true">↗</span>
         </a>
@@ -1827,7 +1883,7 @@ __SHARED_STYLES__
     </section>
     <footer class="about-footer">
       <span>Backyard Birds · Toronto, Canada</span>
-      <span>Built for one feeder, shared for anyone curious.</span>
+      <span>Running on a Raspberry Pi 3</span>
     </footer>
   </main>
 </body>
@@ -1835,7 +1891,9 @@ __SHARED_STYLES__
 """
     return (
         document.replace("__SHARED_STYLES__", _shared_styles())
-        .replace("__PHOTO__", photo)
+        .replace("__FEEDER_PHOTO__", feeder_photo)
+        .replace("__PI_PHOTO__", pi_photo)
+        .replace("__AMAZON_PHOTO__", amazon_photo)
         .replace("__AMAZON_URL__", html.escape(AMAZON_BIRD_FEEDER_URL, quote=True))
         .replace("__GITHUB_URL__", html.escape(GITHUB_REPOSITORY_URL, quote=True))
         .encode("utf-8")
@@ -2872,6 +2930,8 @@ def make_handler(
     media_root = root / "media"
     favicon = Path(__file__).with_name("favicon.svg").read_bytes()
     about_photo_path = Path(__file__).with_name("about-feeder.jpg")
+    about_pi_photo_path = Path(__file__).with_name("about-raspberry-pi.jpg")
+    about_amazon_photo_path = Path(__file__).with_name("about-amazon.png")
     csrf_token = secrets.token_urlsafe(32)
     phone_videos = mobile_preparer or MobileVideoPreparer(root)
     host_allowlist = {
@@ -2908,7 +2968,11 @@ def make_handler(
             elif path == "/about":
                 self._send_bytes(
                     HTTPStatus.OK,
-                    _render_about(photo_available=about_photo_path.is_file()),
+                    _render_about(
+                        photo_available=about_photo_path.is_file(),
+                        pi_photo_available=about_pi_photo_path.is_file(),
+                        amazon_photo_available=about_amazon_photo_path.is_file(),
+                    ),
                     "text/html; charset=utf-8",
                 )
             elif path == "/about-feeder.jpg" and about_photo_path.is_file():
@@ -2916,6 +2980,18 @@ def make_handler(
                     HTTPStatus.OK,
                     about_photo_path.read_bytes(),
                     "image/jpeg",
+                )
+            elif path == "/about-raspberry-pi.jpg" and about_pi_photo_path.is_file():
+                self._send_bytes(
+                    HTTPStatus.OK,
+                    about_pi_photo_path.read_bytes(),
+                    "image/jpeg",
+                )
+            elif path == "/about-amazon.png" and about_amazon_photo_path.is_file():
+                self._send_bytes(
+                    HTTPStatus.OK,
+                    about_amazon_photo_path.read_bytes(),
+                    "image/png",
                 )
             elif path == "/api/media":
                 if public_read_only:

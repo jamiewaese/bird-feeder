@@ -297,22 +297,39 @@ class AboutPageTests(unittest.TestCase):
     def test_about_page_includes_story_resources_diagram_and_photo_placeholder(self) -> None:
         page = _render_about().decode("utf-8")
 
+        self.assertIn("About Backyard Birds", page)
         self.assertIn("Why I built it", page)
-        self.assertIn("How a visit becomes a clip", page)
-        self.assertIn('class="system-diagram"', page)
-        self.assertIn("B4 feeder camera", page)
+        self.assertIn("How it works", page)
+        self.assertIn('class="process-grid"', page)
+        self.assertNotIn('class="system-diagram"', page)
+        self.assertIn("Save the visit", page)
         self.assertIn("Raspberry Pi", page)
         self.assertIn("Cloudflare Tunnel", page)
         self.assertIn("smart+bird+feeder+with+camera", page)
+        self.assertIn("This isn’t an affiliate link", page)
         self.assertIn("github.com/jamiewaese/bird-feeder", page)
-        self.assertIn("data-future-photo", page)
+        self.assertIn("data-future-feeder-photo", page)
+        self.assertIn("data-future-pi-photo", page)
+        self.assertIn("subscription of about $70 a year", page)
+        self.assertIn("waits 30 seconds before the next one", page)
+        self.assertIn("manufacturer’s Android transport library", page)
+        self.assertNotIn("fair amount of stubbornness", page)
+        self.assertNotIn("Slow is reliable", page)
+        self.assertNotIn("same itch", page)
         self.assertIn('href="/"', page)
 
     def test_about_page_uses_supplied_photo_when_available(self) -> None:
-        page = _render_about(photo_available=True).decode("utf-8")
+        page = _render_about(
+            photo_available=True,
+            pi_photo_available=True,
+            amazon_photo_available=True,
+        ).decode("utf-8")
 
         self.assertIn('src="/about-feeder.jpg"', page)
-        self.assertNotIn("data-future-photo", page)
+        self.assertIn('src="/about-raspberry-pi.jpg"', page)
+        self.assertIn('src="/about-amazon.png"', page)
+        self.assertNotIn("data-future-feeder-photo", page)
+        self.assertNotIn("data-future-pi-photo", page)
 
 
 class GallerySchemaTests(unittest.TestCase):
@@ -481,8 +498,26 @@ class GalleryTests(unittest.TestCase):
         with urlopen(self.base_url + "/about") as response:
             about = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
-        self.assertIn("Why I built it", about)
-        self.assertIn("How a visit becomes a clip", about)
+        self.assertIn("About Backyard Birds", about)
+        self.assertIn("How it works", about)
+        self.assertIn('<img src="/about-feeder.jpg"', about)
+        self.assertIn('<img src="/about-raspberry-pi.jpg"', about)
+        self.assertIn('<img src="/about-amazon.png"', about)
+
+        with urlopen(self.base_url + "/about-feeder.jpg") as response:
+            feeder_photo = response.read()
+            self.assertEqual(response.headers["Content-Type"], "image/jpeg")
+        self.assertTrue(feeder_photo.startswith(b"\xff\xd8"))
+
+        with urlopen(self.base_url + "/about-raspberry-pi.jpg") as response:
+            pi_photo = response.read()
+            self.assertEqual(response.headers["Content-Type"], "image/jpeg")
+        self.assertTrue(pi_photo.startswith(b"\xff\xd8"))
+
+        with urlopen(self.base_url + "/about-amazon.png") as response:
+            amazon_photo = response.read()
+            self.assertEqual(response.headers["Content-Type"], "image/png")
+        self.assertTrue(amazon_photo.startswith(b"\x89PNG"))
 
     def test_watch_page_has_back_share_and_player_without_download(self) -> None:
         with urlopen(self.base_url + "/watch/" + self.video_relative) as response:
