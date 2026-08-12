@@ -536,7 +536,9 @@ static int download_one(send_ioctrl_fn send_ioctrl, int sid,
 static int compare_events(const void *left, const void *right) {
     const event_record *a = left;
     const event_record *b = right;
-    return a->start < b->start ? -1 : a->start > b->start ? 1 : 0;
+    /* Recover the newest visits first so one damaged older file cannot make a
+       bounded nightly run miss the media users are most likely to expect. */
+    return a->start > b->start ? -1 : a->start < b->start ? 1 : 0;
 }
 
 int main(int argc, char **argv) {
@@ -561,9 +563,11 @@ int main(int argc, char **argv) {
         return 2;
     }
     long event_index = strtol(argv[5], &end, 10);
-    if (end == argv[5] || *end != '\0' || event_index < 0 ||
-        event_index >= MAX_EVENTS) {
-        fprintf(stderr, "EVENT_INDEX must be from 0 through %d\n",
+    if (end == argv[5] || *end != '\0' || event_index < -1 ||
+        (unsigned long)event_index > UINT32_MAX) {
+        fprintf(stderr,
+                "EVENT_INDEX must be -1 (list only), an index from 0 through %d, "
+                "or an exact event start timestamp\n",
                 MAX_EVENTS - 1);
         return 2;
     }
@@ -651,16 +655,38 @@ int main(int argc, char **argv) {
             fprintf(stderr,
                     "Found %zu SD events; processing index %ld type %ld\n",
                     count, event_index, requested_file_type);
-            if ((size_t)event_index >= count) {
-                failures = -1;
-            } else if (events[event_index].duration != 0) {
+            if (event_index == -1) {
+                for (size_t index = 0; index < count; ++index) {
+                    fprintf(stderr,
+                            "Event index=%zu start=%u duration=%u type=%u status=%u\n",
+                            index, events[index].start, events[index].duration,
+                            events[index].type, events[index].status);
+                }
+            } else {
+                long selected_index = event_index;
+                if (event_index >= MAX_EVENTS) {
+                    selected_index = -1;
+                    for (size_t index = 0; index < count; ++index) {
+                        if (events[index].start == (uint32_t)event_index) {
+                            selected_index = (long)index;
+                            break;
+                        }
+                    }
+                    fprintf(stderr,
+                            "Resolved event start %ld to index %ld\n",
+                            event_index, selected_index);
+                }
+                if (selected_index < 0 || (size_t)selected_index >= count) {
+                    failures = -1;
+                } else if (events[selected_index].duration != 0) {
                 int status = download_one(
-                    send_ioctrl, sid, &events[event_index],
+                    send_ioctrl, sid, &events[selected_index],
                     (int)requested_file_type, argv[2], argv[3]);
                 if (status < 0) {
                     failures++;
                 } else if (status > 0) {
                     downloaded++;
+                }
                 }
             }
         }

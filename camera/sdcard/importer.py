@@ -89,6 +89,11 @@ class MediaImporter:
                 ).fetchone()
                 if deleted is not None:
                     suppressed += 1
+                    if not dry_run:
+                        try:
+                            source.discard_suppressed(media)
+                        except (OSError, ValueError):
+                            failed += 1
                     continue
                 destination_relative = Path(source.source_id).joinpath(
                     *media.relative_path.parts

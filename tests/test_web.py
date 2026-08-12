@@ -18,6 +18,7 @@ from web.app import (
     _json_pairs,
     _render_about,
     _render_index,
+    _render_watch,
     _share_filename,
     _species_summaries,
     list_pairs,
@@ -82,7 +83,7 @@ class SpeciesSummaryTests(unittest.TestCase):
                 "Poecile atricapillus",
                 video=False,
             ),
-            self._pair("095959", "Squirrel", "", is_bird=False),
+            self._pair("095959", "Squirrel", "", is_bird=False, sex="female"),
         ]
 
         summaries = _species_summaries(pairs)
@@ -95,6 +96,9 @@ class SpeciesSummaryTests(unittest.TestCase):
             [(summary.common_name, summary.video_count) for summary in animal_summaries],
             [("Squirrel", 1)],
         )
+        self.assertEqual(animal_summaries[0].female_video_count, 1)
+        self.assertEqual(animal_summaries[0].male_video_count, 0)
+        self.assertEqual(animal_summaries[0].unknown_sex_video_count, 0)
 
         page = _render_index(pairs, "test-token").decode("utf-8")
         species_filters = re.findall(r'data-species-filter="([^"]+)"', page)
@@ -132,10 +136,13 @@ class SpeciesSummaryTests(unittest.TestCase):
         self.assertIn('data-species-label="Black-capped Chickadee"', page)
         self.assertIn('card.dataset.species === activeSpecies', page)
         self.assertIn('card.dataset.hasVideo === "true"', page)
-        self.assertEqual(
-            page.count('<section class="activity-chart" data-hourly-activity'), 2
-        )
+        self.assertEqual(page.count('data-hourly-activity '), 3)
         self.assertIn('data-chart-species="poecile atricapillus"', page)
+        self.assertIn('data-chart-species="squirrel"', page)
+        self.assertIn(
+            'aria-label="Squirrel sightings by hour, sex, and month" hidden', page
+        )
+        self.assertIn('class="activity-chart animal-activity-chart"', page)
         self.assertIn('class="species-row species-card-shell" data-species-row', page)
         self.assertNotIn("When they visit", page)
         self.assertNotIn("data-hourly-summary", page)
@@ -144,7 +151,20 @@ class SpeciesSummaryTests(unittest.TestCase):
         self.assertIn("activitySexStyles", page)
         self.assertIn('male: { label: "Male", color: "#4f739d"', page)
         self.assertIn('female: { label: "Female", color: "#bd6b87"', page)
-        self.assertIn("item.hourlyBySex[sex][hour] += birdCount", page)
+        self.assertIn("item.hourlyBySex[sex][hour] += sightingCount", page)
+        self.assertIn('if (!isBird && card.dataset.isAnimal !== "true") return', page)
+        self.assertIn(
+            'unknown: { label: "Unknown sex", color: "#8b603b"', page
+        )
+        self.assertIn("animalActivityStyles[sex]", page)
+        self.assertIn(
+            'Blue solid lines indicate males, pink dashed lines indicate females, and the brown solid line indicates unknown-sex sightings.',
+            page,
+        )
+        self.assertIn('tooltip.style.top = `${yPosition(sightings)}px`', page)
+        self.assertNotIn("yPosition(birds)", page)
+        self.assertIn('class="species-row species-card-shell animal-card-shell"', page)
+        self.assertIn(".animal-grid { grid-template-columns: minmax(0, 1fr)", page)
         self.assertIn("monthlyVideos: Array(12).fill(0)", page)
         self.assertIn("item.monthlyVideos[month] += 1", page)
         self.assertIn('class: "activity-months"', page)
@@ -153,10 +173,18 @@ class SpeciesSummaryTests(unittest.TestCase):
         self.assertIn("plotWidth >= 210", page)
         self.assertIn('Array(12).fill("")', page)
         self.assertIn("activity-night", page)
+        self.assertIn('createSvgElement("linearGradient"', page)
+        self.assertIn('gradientUnits: "userSpaceOnUse"', page)
+        self.assertIn("const nightTransitionHours = 1.5", page)
+        self.assertIn('"stop-opacity": "0.09"', page)
+        self.assertIn('"stop-opacity": "0"', page)
+        self.assertIn("fill: `url(#${dawnGradientId})`", page)
+        self.assertIn("fill: `url(#${duskGradientId})`", page)
         self.assertIn("activity-daypart-icons", page)
         self.assertIn("moonStarsPath", page)
+        self.assertIn("eveningMoonStars", page)
         self.assertIn("sunPath", page)
-        self.assertIn("scale(0.0625)", page)
+        self.assertIn("scale(0.078125)", page)
         self.assertIn("Shaded areas indicate nighttime hours", page)
         self.assertIn("grid-template-columns: 300px minmax(0, 1fr)", page)
         self.assertIn(".species-card-shell { overflow: hidden; border:", page)
@@ -181,18 +209,30 @@ class SpeciesSummaryTests(unittest.TestCase):
         self.assertIn("Other feeder visitors", page)
         self.assertEqual(page.count('<button class="section-toggle"'), 2)
         self.assertIn(
-            'data-section-label="Birds we’ve seen" aria-expanded="true"', page
+            'data-section-label="Birds we’ve seen" aria-expanded="false"', page
         )
         self.assertIn(
-            'data-section-label="Other feeder visitors" aria-expanded="true"', page
+            'data-section-label="Other feeder visitors" aria-expanded="false"', page
         )
         self.assertIn('aria-controls="species-section-content"', page)
         self.assertIn('aria-controls="animal-section-content"', page)
-        self.assertIn('<div id="species-section-content" data-section-content>', page)
-        self.assertIn('<div id="animal-section-content" data-section-content>', page)
+        self.assertIn('aria-label="Expand Birds we’ve seen"', page)
+        self.assertIn('aria-label="Expand Other feeder visitors"', page)
+        self.assertIn('<div id="species-section-content" data-section-content hidden>', page)
+        self.assertIn('<div id="animal-section-content" data-section-content hidden>', page)
         self.assertIn("content.hidden = !nextExpanded", page)
+        self.assertIn(
+            "window.requestAnimationFrame(() => renderHourlyActivity(hourlyActivityCards))",
+            page,
+        )
         self.assertIn('data-species-filter="squirrel"', page)
         self.assertIn('data-visitor-kind="animal"', page)
+        self.assertIn(
+            'speciesButton.dataset.visitorKind === "animal" ? "animals" : "birds"',
+            page,
+        )
+        self.assertIn('classification-stats classification-stats-animal', page)
+        self.assertIn(".classification-stats-animal { grid-template-columns:", page)
         self.assertIn('<option value="animals">Other animal detected</option>', page)
         self.assertIn('<option value="empty">No animal detected</option>', page)
         self.assertIn('(filter === "animals" && card.dataset.isAnimal === "true")', page)
@@ -297,7 +337,11 @@ class AboutPageTests(unittest.TestCase):
     def test_about_page_includes_story_resources_diagram_and_photo_placeholder(self) -> None:
         page = _render_about().decode("utf-8")
 
-        self.assertIn("About Backyard Birds", page)
+        self.assertIn("<h1>What is this?</h1>", page)
+        self.assertIn("TL;DR", page)
+        self.assertIn("runs this gallery from my basement", page)
+        self.assertNotIn("class=\"about-intro\"", page)
+        self.assertNotIn("This is the site I ended up building for it", page)
         self.assertIn("Why I built it", page)
         self.assertIn("How it works", page)
         self.assertIn('class="process-grid"', page)
@@ -305,16 +349,41 @@ class AboutPageTests(unittest.TestCase):
         self.assertIn("Save the visit", page)
         self.assertIn("Raspberry Pi", page)
         self.assertIn("Cloudflare Tunnel", page)
+        self.assertIn("bought the domain through Cloudflare for about $10 a year", page)
+        self.assertIn("without opening a port on my router", page)
         self.assertIn("smart+bird+feeder+with+camera", page)
         self.assertIn("This isn’t an affiliate link", page)
         self.assertIn("github.com/jamiewaese/bird-feeder", page)
         self.assertIn("data-future-feeder-photo", page)
         self.assertIn("data-future-pi-photo", page)
-        self.assertIn("subscription of about $70 a year", page)
+        self.assertIn("subscription of $59.99 a year", page)
+        self.assertIn("the box, the manual and the Amazon listing don’t mention", page)
+        self.assertIn("comes with an iOS app that can identify the species", page)
         self.assertIn("but that’s so old school", page)
         self.assertIn("but he thinks everything is a great idea", page)
         self.assertIn("waits 30 seconds before the next one", page)
-        self.assertIn("manufacturer’s Android transport library", page)
+        self.assertIn("downloads the previous day’s worth of files", page)
+        self.assertIn("when I used the iOS app", page)
+        self.assertIn("manufacturer’s transport library", page)
+        self.assertIn("Chrome and Android phones could open the MP4s", page)
+        self.assertIn("couldn’t be sent through iMessage", page)
+        self.assertIn("runs each video through FFmpeg", page)
+        self.assertIn("The original from the camera is left untouched", page)
+        self.assertIn("Reading the species charts", page)
+        self.assertIn(".story-grid > div, .story-copy { min-width: 0; }", page)
+        self.assertIn(".species-card-example-scroll { width: 100%; overflow-x: auto;", page)
+        self.assertIn(".about-species-card { width: 100%; grid-template-columns: 1fr; }", page)
+        self.assertIn(".about-species-card .activity-chart { min-height: 170px;", page)
+        self.assertIn(".story-photo { width: 100%; max-width: 100%;", page)
+        self.assertIn(".about-shell figure { max-width: 100%; box-sizing: border-box; }", page)
+        self.assertIn("horizontal axis runs from midnight to 11 p.m.", page)
+        self.assertIn(
+            "quick overview of the counts at each time of day for each species", page
+        )
+        self.assertNotIn("vertical scales adjust independently", page)
+        self.assertIn("This has been a labour of love", page)
+        self.assertIn("None of this appeared from nowhere", page)
+        self.assertIn("putting the code online for free", page)
         self.assertNotIn("fair amount of stubbornness", page)
         self.assertNotIn("Slow is reliable", page)
         self.assertNotIn("same itch", page)
@@ -325,13 +394,69 @@ class AboutPageTests(unittest.TestCase):
             photo_available=True,
             pi_photo_available=True,
             amazon_photo_available=True,
+            subscription_photo_available=True,
         ).decode("utf-8")
 
         self.assertIn('src="/about-feeder.jpg"', page)
         self.assertIn('src="/about-raspberry-pi.jpg"', page)
         self.assertIn('src="/about-amazon.png"', page)
+        self.assertIn('src="/about-subscription.jpg"', page)
+        self.assertIn('class="species-row species-card-shell about-species-card"', page)
+        self.assertIn("Northern Cardinal sightings by hour, sex, and month", page)
+        self.assertIn(
+            "The female Northern Cardinal is more active late in the day, at least this one is.",
+            page,
+        )
+        self.assertNotIn("Swipe across on a phone", page)
+        self.assertNotIn('src="/about-species-card.png"', page)
         self.assertNotIn("data-future-feeder-photo", page)
         self.assertNotIn("data-future-pi-photo", page)
+        self.assertLess(page.index("The camera"), page.index('src="/about-feeder.jpg"'))
+        self.assertLess(page.index('src="/about-subscription.jpg"'), page.index('src="/about-feeder.jpg"'))
+        self.assertLess(page.index('src="/about-feeder.jpg"'), page.index("Using an old Raspberry Pi"))
+        self.assertLess(
+            page.index("quick overview of the counts"),
+            page.index('class="species-row species-card-shell about-species-card"'),
+        )
+        self.assertLess(
+            page.index('class="species-row species-card-shell about-species-card"'),
+            page.index("Why I’m sharing it"),
+        )
+
+    def test_about_species_card_uses_current_cardinal_observations(self) -> None:
+        pairs = [
+            GalleryPair(
+                source_id="yard",
+                pair_key="260811/070000_100_001_P",
+                date_code="260811",
+                time_code="070000",
+                snapshot_path="yard/snaps/cardinal-male.jpg",
+                video_path="yard/video/cardinal-male.mp4",
+                is_bird=True,
+                common_name="Northern Cardinal",
+                scientific_name="Cardinalis cardinalis",
+                sex="male",
+            ),
+            GalleryPair(
+                source_id="yard",
+                pair_key="260811/183000_100_002_P",
+                date_code="260811",
+                time_code="183000",
+                video_path="yard/video/cardinal-female.mp4",
+                is_bird=True,
+                common_name="Northern Cardinal",
+                scientific_name="Cardinalis cardinalis",
+                sex="female",
+            ),
+        ]
+
+        page = _render_about(pairs=pairs).decode("utf-8")
+
+        self.assertIn('src="/media/yard/snaps/cardinal-male.jpg"', page)
+        self.assertIn('<b>2</b> <span>videos</span>', page)
+        self.assertIn('class="sex-key sex-key-male">1 male</span>', page)
+        self.assertIn('class="sex-key sex-key-female">1 female</span>', page)
+        self.assertIn("Northern Cardinal, female, 6 PM–7 PM: 1 bird", page)
 
 
 class GallerySchemaTests(unittest.TestCase):
@@ -500,11 +625,13 @@ class GalleryTests(unittest.TestCase):
         with urlopen(self.base_url + "/about") as response:
             about = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
-        self.assertIn("About Backyard Birds", about)
+        self.assertIn("<h1>What is this?</h1>", about)
         self.assertIn("How it works", about)
         self.assertIn('<img src="/about-feeder.jpg"', about)
         self.assertIn('<img src="/about-raspberry-pi.jpg"', about)
         self.assertIn('<img src="/about-amazon.png"', about)
+        self.assertIn('<img src="/about-subscription.jpg"', about)
+        self.assertIn('class="species-row species-card-shell about-species-card"', about)
 
         with urlopen(self.base_url + "/about-feeder.jpg") as response:
             feeder_photo = response.read()
@@ -520,6 +647,11 @@ class GalleryTests(unittest.TestCase):
             amazon_photo = response.read()
             self.assertEqual(response.headers["Content-Type"], "image/png")
         self.assertTrue(amazon_photo.startswith(b"\x89PNG"))
+
+        with urlopen(self.base_url + "/about-subscription.jpg") as response:
+            subscription_photo = response.read()
+            self.assertEqual(response.headers["Content-Type"], "image/jpeg")
+        self.assertTrue(subscription_photo.startswith(b"\xff\xd8"))
 
     def test_watch_page_has_back_share_and_player_without_download(self) -> None:
         with urlopen(self.base_url + "/watch/" + self.video_relative) as response:
@@ -553,6 +685,21 @@ class GalleryTests(unittest.TestCase):
         self.assertIn("minmax(300px, 330px)", page)
         self.assertIn(".gallery-nav-previous { left: 10px; }", page)
 
+    def test_watch_player_tracks_video_aspect_ratio_without_letterboxing(self) -> None:
+        with urlopen(self.base_url + "/watch/" + self.video_relative) as response:
+            page = response.read().decode("utf-8")
+
+        self.assertIn('class="player" data-video-player', page)
+        self.assertIn('video.addEventListener("loadedmetadata", fitPlayerToVideo)', page)
+        self.assertIn("video.videoWidth / video.videoHeight", page)
+        self.assertIn("player.style.aspectRatio", page)
+        self.assertIn('player.style.removeProperty("width")', page)
+        self.assertIn("Math.max(1, maximumHeight) * aspectRatio", page)
+        self.assertIn("window.visualViewport?.addEventListener", page)
+        self.assertIn("height: 100%; object-fit: cover", page)
+        self.assertNotIn("max-height: calc(100vh - 104px)", page)
+        self.assertNotIn("video { max-height: 68vh; }", page)
+
     def test_watch_page_counts_down_to_next_video_in_gallery_order(self) -> None:
         next_relative = "yard/video/260809/092000_100_030_P.mp4"
         previous_relative = "yard/video/260809/093000_100_030_P.mp4"
@@ -567,7 +714,7 @@ class GalleryTests(unittest.TestCase):
         with urlopen(self.base_url + "/watch/" + self.video_relative) as response:
             page = response.read().decode("utf-8")
         self.assertIn('data-next-video', page)
-        self.assertIn('data-countdown>10</strong>', page)
+        self.assertIn('data-countdown>5</strong>', page)
         self.assertIn('data-countdown-bar', page)
         self.assertIn('class="next-video-progress"', page)
         self.assertIn("Playing in", page)
@@ -575,7 +722,7 @@ class GalleryTests(unittest.TestCase):
         self.assertIn("Play now", page)
         self.assertIn("/watch/" + next_relative + "?autoplay=1", page)
         self.assertIn('video.addEventListener("timeupdate", updateCountdown)', page)
-        self.assertIn('const countdownSeconds = 10', page)
+        self.assertIn('const countdownSeconds = 5', page)
         self.assertIn('countdownDeadline = Date.now()', page)
         self.assertIn('countdownDeadline - Date.now()', page)
         self.assertIn('countdownTimer = window.setInterval', page)
@@ -585,6 +732,8 @@ class GalleryTests(unittest.TestCase):
         self.assertIn('source.setAttribute("src", nextSource.getAttribute("src"))', page)
         self.assertIn('window.history.pushState({}, "", historyUrl)', page)
         self.assertIn('data-play-next', page)
+        self.assertIn("width: min(290px, calc(100% - 32px))", page)
+        self.assertIn("min-height: 36px", page)
         self.assertIn('document.querySelector(".watch-info")', page)
         self.assertIn('class="gallery-nav gallery-nav-previous"', page)
         self.assertIn('href="/watch/' + previous_relative + '?autoplay=1"', page)
@@ -597,6 +746,47 @@ class GalleryTests(unittest.TestCase):
             next_page = response.read().decode("utf-8")
         self.assertIn("data-watch-video autoplay", next_page)
         self.assertNotIn('data-next-video', next_page)
+
+    def test_up_next_panel_adds_visitor_sex_to_species_name(self) -> None:
+        current = GalleryPair(
+            source_id="yard",
+            pair_key="260809/092443_150_031_P",
+            date_code="260809",
+            time_code="092443",
+            video_path=self.video_relative,
+        )
+        upcoming = GalleryPair(
+            source_id="yard",
+            pair_key="260809/092000_100_030_P",
+            date_code="260809",
+            time_code="092000",
+            video_path="yard/video/260809/092000_100_030_P.mp4",
+            is_bird=True,
+            common_name="House Sparrow",
+            scientific_name="Passer domesticus",
+            sex="male",
+        )
+
+        page = _render_watch(current, "test-token", next_pair=upcoming).decode("utf-8")
+
+        self.assertIn("<strong>House Sparrow · Male</strong>", page)
+
+        animal = GalleryPair(
+            source_id="yard",
+            pair_key="260809/091500_100_029_P",
+            date_code="260809",
+            time_code="091500",
+            video_path="yard/video/260809/091500_100_029_P.mp4",
+            is_bird=False,
+            common_name="Eastern gray squirrel",
+            scientific_name="Sciurus carolinensis",
+            sex="female",
+        )
+        animal_page = _render_watch(
+            current, "test-token", next_pair=animal
+        ).decode("utf-8")
+
+        self.assertIn("<strong>Eastern gray squirrel · Female</strong>", animal_page)
 
     def test_species_metadata_appears_in_gallery_and_api(self) -> None:
         connection = sqlite3.connect(self.library / "catalog.sqlite3")
@@ -646,7 +836,7 @@ class GalleryTests(unittest.TestCase):
         self.assertIn('<aside class="watch-info" aria-label="Capture details">', watch_page)
         self.assertIn("<h1>Black-capped Chickadee</h1>", watch_page)
         self.assertLess(
-            watch_page.index('<div class="player">'),
+            watch_page.index('<div class="player" data-video-player>'),
             watch_page.index('<aside class="watch-info"'),
         )
         self.assertIn("<span>Observed</span><p>Feeding</p>", watch_page)

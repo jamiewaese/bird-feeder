@@ -8,14 +8,17 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 
-PROMPT_VERSION = "bird-and-wildlife-id-v1"
+PROMPT_VERSION = "bird-wildlife-sex-person-privacy-v3"
 PROVIDER = "openai"
+VISIT_CONTEXT_SECONDS = 120
+MAX_VISIT_CONTEXT_IMAGES = 3
 
 FACT_FOCUSES = (
     "seasonal life: migration, winter survival, molt, breeding, or changing food needs at this time of year",
@@ -77,6 +80,20 @@ CREATE TABLE IF NOT EXISTS classifications (
 );
 CREATE INDEX IF NOT EXISTS classification_species
     ON classifications (common_name, scientific_name);
+
+CREATE TABLE IF NOT EXISTS privacy_deletions (
+    source_id TEXT NOT NULL,
+    pair_key TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    response_id TEXT,
+    estimated_cost_usd REAL NOT NULL,
+    detected_at TEXT NOT NULL,
+    PRIMARY KEY (source_id, pair_key)
+);
+CREATE INDEX IF NOT EXISTS privacy_deletion_month
+    ON privacy_deletions (detected_at, provider);
 """
 
 CLASSIFICATION_MIGRATION_COLUMNS = {
@@ -113,6 +130,7 @@ class BirdClassification:
     sex_evidence: str
     age_evidence: str
     interesting_fact: str
+    person_detected: bool = False
     response_id: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
@@ -136,6 +154,7 @@ class ClassificationClient(Protocol):
         *,
         location: str,
         captured_at: str,
+        context_images: tuple[Path, ...] = (),
     ) -> BirdClassification: ...
 
 
@@ -173,9 +192,47 @@ class OpenAIResponsesClient:
         *,
         location: str,
         captured_at: str,
+        context_images: tuple[Path, ...] = (),
     ) -> BirdClassification:
         mime_type = _image_mime_type(image_path)
         encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+        content: list[dict[str, object]] = [
+            {
+                "type": "input_text",
+                "text": _prompt(location, captured_at),
+            },
+            {
+                "type": "input_image",
+                "image_url": f"data:{mime_type};base64,{encoded}",
+                "detail": "high",
+            },
+        ]
+        if context_images:
+            content.append(
+                {
+                    "type": "input_text",
+                    "text": (
+                        "The following images are nearby captures from the same "
+                        "feeder. Use them only to judge whether the same visitor "
+                        "continues across a burst; do not copy an identification "
+                        "when the visible animal changes."
+                    ),
+                }
+            )
+            for context_image in context_images:
+                context_mime_type = _image_mime_type(context_image)
+                context_encoded = base64.b64encode(
+                    context_image.read_bytes()
+                ).decode("ascii")
+                content.append(
+                    {
+                        "type": "input_image",
+                        "image_url": (
+                            f"data:{context_mime_type};base64,{context_encoded}"
+                        ),
+                        "detail": "low",
+                    }
+                )
         payload = {
             "model": self.model,
             "store": False,
@@ -184,23 +241,13 @@ class OpenAIResponsesClient:
             "input": [
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": _prompt(location, captured_at),
-                        },
-                        {
-                            "type": "input_image",
-                            "image_url": f"data:{mime_type};base64,{encoded}",
-                            "detail": "high",
-                        },
-                    ],
+                    "content": content,
                 }
             ],
             "text": {
                 "format": {
                     "type": "json_schema",
-                    "name": "bird_identification",
+                    "name": "feeder_wildlife_identification",
                     "strict": True,
                     "schema": _response_schema(),
                 }
@@ -233,11 +280,12 @@ class OpenAIResponsesClient:
             _validate_result(result)
         except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
             raise ClassificationAPIError(
-                "OpenAI returned a response that did not match the bird schema"
+                "OpenAI returned a response that did not match the wildlife schema"
             ) from error
 
         usage = response_payload.get("usage") or {}
         return BirdClassification(
+            person_detected=result["person_detected"],
             is_bird=result["is_bird"],
             common_name=result["common_name"],
             scientific_name=result["scientific_name"],
@@ -356,9 +404,29 @@ class BirdClassifier:
                         image_path,
                         location=location,
                         captured_at=_captured_at(row),
+                        context_images=self._visit_context_images(
+                            connection,
+                            row,
+                            max_image_bytes=max_image_bytes,
+                        ),
                     )
                     cost = self._estimated_cost(classification)
-                    self._record_success(connection, row["id"], classification, cost, clock)
+                    if classification.person_detected:
+                        self._delete_person_capture(
+                            connection,
+                            row,
+                            classification,
+                            cost,
+                            clock,
+                        )
+                    else:
+                        self._record_success(
+                            connection,
+                            row["id"],
+                            classification,
+                            cost,
+                            clock,
+                        )
                     succeeded += 1
                     batch_cost += cost
                     spent_this_month += cost
@@ -439,9 +507,14 @@ class BirdClassifier:
         parameters.append(max_images)
         return connection.execute(
             f"""
-            SELECT id, relative_path, date_code, time_code
+            SELECT id, source_id, pair_key, relative_path, date_code, time_code
             FROM media
             WHERE kind = 'snapshot' AND size_bytes <= ?
+            AND NOT EXISTS (
+                SELECT 1 FROM classifications AS current_classification
+                WHERE current_classification.media_id = media.id
+                  AND current_classification.provider = 'manual'
+            )
             {paired_filter}
             {already_done}
             ORDER BY date_code {direction}, time_code {direction}, subsecond_code {direction}
@@ -450,15 +523,209 @@ class BirdClassifier:
             parameters,
         ).fetchall()
 
+    def _visit_context_images(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        max_image_bytes: int,
+    ) -> tuple[Path, ...]:
+        hours, minutes, seconds = (
+            int(row["time_code"][0:2]),
+            int(row["time_code"][2:4]),
+            int(row["time_code"][4:6]),
+        )
+        target_second = hours * 3600 + minutes * 60 + seconds
+        second_expression = (
+            "CAST(substr(time_code, 1, 2) AS INTEGER) * 3600 + "
+            "CAST(substr(time_code, 3, 2) AS INTEGER) * 60 + "
+            "CAST(substr(time_code, 5, 2) AS INTEGER)"
+        )
+        nearby = connection.execute(
+            f"""
+            SELECT relative_path
+            FROM media
+            WHERE kind = 'snapshot'
+              AND date_code = ?
+              AND id != ?
+              AND size_bytes <= ?
+              AND ABS(({second_expression}) - ?) <= ?
+            ORDER BY ABS(({second_expression}) - ?), time_code DESC,
+                     subsecond_code DESC
+            LIMIT ?
+            """,
+            (
+                row["date_code"],
+                row["id"],
+                max_image_bytes,
+                target_second,
+                VISIT_CONTEXT_SECONDS,
+                target_second,
+                MAX_VISIT_CONTEXT_IMAGES,
+            ),
+        ).fetchall()
+        paths: list[Path] = []
+        for nearby_row in nearby:
+            path = self.media_root.joinpath(
+                *Path(nearby_row["relative_path"]).parts
+            )
+            if path.is_file():
+                paths.append(path)
+        return tuple(paths)
+
+    def _delete_person_capture(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        result: BirdClassification,
+        cost: float,
+        clock: datetime,
+    ) -> None:
+        """Tombstone and remove a capture pair when a person is detected."""
+        source_id = str(row["source_id"])
+        pair_key = str(row["pair_key"])
+        rows = connection.execute(
+            """
+            SELECT id, relative_path
+            FROM media
+            WHERE source_id = ? AND pair_key = ?
+            """,
+            (source_id, pair_key),
+        ).fetchall()
+        if not rows:
+            raise OSError("privacy capture pair disappeared before deletion")
+
+        staged: list[tuple[Path, Path]] = []
+        trash_root = self.library_root / ".deleting" / uuid4().hex
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            for index, media_row in enumerate(rows):
+                relative = PurePosixPath(media_row["relative_path"])
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError("invalid catalogued media path")
+                candidate = self.media_root.joinpath(*relative.parts)
+                try:
+                    resolved = candidate.resolve(strict=True)
+                except FileNotFoundError:
+                    continue
+                if self.media_root not in resolved.parents or not resolved.is_file():
+                    raise ValueError("catalogued media escaped the library")
+                trash_root.mkdir(parents=True, exist_ok=True)
+                staged_path = trash_root / f"{index}-{resolved.name}"
+                resolved.replace(staged_path)
+                staged.append((staged_path, resolved))
+
+            media_ids = [int(media_row["id"]) for media_row in rows]
+            placeholders = ",".join("?" for _ in media_ids)
+            connection.execute(
+                f"DELETE FROM classification_attempts WHERE media_id IN ({placeholders})",
+                media_ids,
+            )
+            connection.execute(
+                f"DELETE FROM classifications WHERE media_id IN ({placeholders})",
+                media_ids,
+            )
+            for table in ("stars", "classification_overrides"):
+                exists = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    (table,),
+                ).fetchone()
+                if exists is None:
+                    continue
+                if table == "stars":
+                    connection.execute(
+                        "DELETE FROM stars WHERE source_id = ? AND pair_key = ?",
+                        (source_id, pair_key),
+                    )
+                else:
+                    connection.execute(
+                        f"DELETE FROM classification_overrides WHERE media_id IN ({placeholders})",
+                        media_ids,
+                    )
+            detected_at = clock.astimezone(timezone.utc).isoformat()
+            connection.execute(
+                """
+                INSERT INTO deleted_pairs (source_id, pair_key, deleted_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT (source_id, pair_key) DO UPDATE SET
+                    deleted_at = excluded.deleted_at
+                """,
+                (source_id, pair_key, detected_at),
+            )
+            connection.execute(
+                """
+                INSERT INTO privacy_deletions (
+                    source_id, pair_key, provider, model, prompt_version,
+                    response_id, estimated_cost_usd, detected_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (source_id, pair_key) DO UPDATE SET
+                    provider = excluded.provider,
+                    model = excluded.model,
+                    prompt_version = excluded.prompt_version,
+                    response_id = excluded.response_id,
+                    estimated_cost_usd = excluded.estimated_cost_usd,
+                    detected_at = excluded.detected_at
+                """,
+                (
+                    source_id,
+                    pair_key,
+                    PROVIDER,
+                    self.model,
+                    self.prompt_version,
+                    result.response_id,
+                    cost,
+                    detected_at,
+                ),
+            )
+            connection.execute(
+                "DELETE FROM media WHERE source_id = ? AND pair_key = ?",
+                (source_id, pair_key),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            for staged_path, original_path in reversed(staged):
+                original_path.parent.mkdir(parents=True, exist_ok=True)
+                staged_path.replace(original_path)
+            raise
+
+        for staged_path, _ in staged:
+            staged_path.unlink(missing_ok=True)
+        for cache_directory in ("mobile-v1", "mobile-v2"):
+            mobile_root = self.library_root / cache_directory
+            for media_row in rows:
+                relative = PurePosixPath(media_row["relative_path"])
+                if relative.suffix.casefold() != ".mp4":
+                    continue
+                cached = mobile_root.joinpath(*relative.parts)
+                try:
+                    resolved_cached = cached.resolve(strict=True)
+                except (FileNotFoundError, OSError):
+                    continue
+                if mobile_root in resolved_cached.parents and resolved_cached.is_file():
+                    resolved_cached.unlink(missing_ok=True)
+        if trash_root.exists():
+            trash_root.rmdir()
+        deleting_root = trash_root.parent
+        if deleting_root.exists() and not any(deleting_root.iterdir()):
+            deleting_root.rmdir()
+
     @staticmethod
     def _month_usage(connection: sqlite3.Connection, month: str) -> tuple[int, float]:
         row = connection.execute(
             """
             SELECT COUNT(*), COALESCE(SUM(estimated_cost_usd), 0)
-            FROM classification_attempts
-            WHERE provider = ? AND substr(attempted_at, 1, 7) = ?
+            FROM (
+                SELECT estimated_cost_usd
+                FROM classification_attempts
+                WHERE provider = ? AND substr(attempted_at, 1, 7) = ?
+                UNION ALL
+                SELECT estimated_cost_usd
+                FROM privacy_deletions
+                WHERE provider = ? AND substr(detected_at, 1, 7) = ?
+            )
             """,
-            (PROVIDER, month),
+            (PROVIDER, month, PROVIDER, month),
         ).fetchone()
         return int(row[0]), float(row[1])
 
@@ -595,7 +862,11 @@ def _prompt(location: str, captured_at: str) -> str:
         % len(FACT_FOCUSES)
     ]
     return (
-        "Identify the bird or other animal, if any, in this bird-feeder image. "
+        "This feeder can be visited by birds and other wildlife. Identify any "
+        "visible animal in this image; do not assume the visitor must be a bird. "
+        "The first image is the primary capture to classify. If nearby feeder "
+        "images follow, use them to keep a visually continuous visit consistent, "
+        "but treat a visibly different visitor as a new identification. "
         "Use visible field marks and geographic plausibility; do not invent details. "
         f"The camera is near {location}, and the capture time is {captured_at}. "
         "Set is_bird true only for a bird. For another visible animal—such as a "
@@ -606,11 +877,13 @@ def _prompt(location: str, captured_at: str) -> str:
         "common_name 'No animal detected', and use an empty scientific_name. Common "
         "and scientific names must otherwise be plain names without commentary. Count "
         "visible birds in bird_count; use bird_count 0 for other animals and empty "
-        "frames. Infer sex or age only "
-        "when plumage or another visible field mark supports it; otherwise use "
-        "indeterminate and briefly say why. For non-bird animals use not_applicable "
-        "for sex and age and leave sex_evidence and age_evidence empty. For empty "
-        "frames use not_applicable for sex and age, behavior 'No animal visible', "
+        "frames. Infer sex for birds and other animals only when plumage, anatomy, "
+        "or another visible sex-specific field mark supports it; do not infer sex "
+        "from size, behavior, or the species name alone. Otherwise use indeterminate "
+        "and briefly say why in sex_evidence. Infer bird age only when a visible "
+        "field mark supports it; otherwise use indeterminate and briefly say why. "
+        "For non-bird animals use not_applicable for age and leave age_evidence empty. "
+        "For empty frames use not_applicable for sex and age, behavior 'No animal visible', "
         "and empty evidence and fact fields. The interesting_fact is the main editorial note, "
         "not a caption of the obvious feeder activity. Make it vivid, specific to "
         "the identified bird or animal species, and useful to a curious reader in one or two short "
@@ -623,8 +896,11 @@ def _prompt(location: str, captured_at: str) -> str:
         "check for a thick orange-red bill, a subtle crest, and red in the wings or "
         "tail: those marks favor a female or juvenile Northern Cardinal over a House "
         "Finch, House Sparrow, or Mourning Dove. Use the complete combination of "
-        "visible marks rather than overall brown color or camera perspective. Avoid "
-        "generic facts that could describe most "
+        "visible marks rather than overall brown color or camera perspective. "
+        "People can also appear accidentally. Set person_detected true whenever a "
+        "real person is visible, even partially or in the background; otherwise set "
+        "it false. This privacy flag is independent of the animal identification. "
+        "Avoid generic facts that could describe most "
         "birds, and do not merely repeat the observed behavior. Keep all prose brief "
         "and do not invent visible details."
     )
@@ -643,6 +919,7 @@ def _response_schema() -> dict[str, object]:
     return {
         "type": "object",
         "properties": {
+            "person_detected": {"type": "boolean"},
             "is_bird": {"type": "boolean"},
             "common_name": {"type": "string", "maxLength": 100},
             "scientific_name": {"type": "string", "maxLength": 120},
@@ -682,6 +959,7 @@ def _response_schema() -> dict[str, object]:
             "interesting_fact": {"type": "string", "maxLength": 300},
         },
         "required": [
+            "person_detected",
             "is_bird",
             "common_name",
             "scientific_name",
@@ -719,6 +997,7 @@ def _validate_result(result: object) -> None:
     if not isinstance(result, dict):
         raise TypeError("result must be an object")
     required = {
+        "person_detected",
         "is_bird",
         "common_name",
         "scientific_name",
@@ -738,6 +1017,8 @@ def _validate_result(result: object) -> None:
         raise ValueError("unexpected result fields")
     if not isinstance(result["is_bird"], bool):
         raise TypeError("is_bird must be boolean")
+    if not isinstance(result["person_detected"], bool):
+        raise TypeError("person_detected must be boolean")
     if result["certainty"] not in {"certain", "likely", "uncertain"}:
         raise ValueError("invalid certainty")
     if result["sex"] not in {"male", "female", "indeterminate", "not_applicable"}:

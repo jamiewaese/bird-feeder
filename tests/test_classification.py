@@ -19,17 +19,26 @@ from camera.sdcard import FilesystemMediaSource, MediaImporter
 
 
 class FakeClient:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, person_detected: bool = False) -> None:
         self.calls: list[Path] = []
+        self.contexts: list[tuple[Path, ...]] = []
         self.fail = fail
+        self.person_detected = person_detected
 
     def classify(
-        self, image_path: Path, *, location: str, captured_at: str
+        self,
+        image_path: Path,
+        *,
+        location: str,
+        captured_at: str,
+        context_images: tuple[Path, ...] = (),
     ) -> BirdClassification:
         self.calls.append(image_path)
+        self.contexts.append(context_images)
         if self.fail:
             raise ClassificationAPIError("fixture failure")
         return BirdClassification(
+            person_detected=self.person_detected,
             is_bird=True,
             common_name="Black-capped Chickadee",
             scientific_name="Poecile atricapillus",
@@ -128,6 +137,54 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(result.succeeded, 2)
         sleep.assert_called_once_with(6.1)
 
+    def test_nearby_snapshots_are_sent_as_visual_visit_context(self) -> None:
+        client = FakeClient()
+
+        result = BirdClassifier(self.library, client).run(
+            max_images=1,
+            execute=True,
+        )
+
+        self.assertEqual(result.succeeded, 1)
+        self.assertEqual(
+            [path.name for path in client.contexts[0]],
+            ["092444_150_031_P.jpg", "092443_150_031_P.jpg"],
+        )
+
+    def test_person_detection_tombstones_and_deletes_capture_pair(self) -> None:
+        client = FakeClient(person_detected=True)
+
+        result = BirdClassifier(self.library, client).run(
+            max_images=1,
+            newest_first=False,
+            execute=True,
+        )
+
+        self.assertEqual(result.succeeded, 1)
+        snapshot = self.library / "media/yard/snaps/260809/092443_150_031_P.jpg"
+        video = self.library / "media/yard/video/260809/092443_150_031_P.mp4"
+        self.assertFalse(snapshot.exists())
+        self.assertFalse(video.exists())
+        connection = sqlite3.connect(self.library / "catalog.sqlite3")
+        try:
+            remaining = connection.execute(
+                "SELECT COUNT(*) FROM media WHERE pair_key = ?",
+                ("260809/092443_150_031_P",),
+            ).fetchone()[0]
+            tombstone = connection.execute(
+                "SELECT 1 FROM deleted_pairs WHERE source_id = ? AND pair_key = ?",
+                ("yard", "260809/092443_150_031_P"),
+            ).fetchone()
+            audit = connection.execute(
+                "SELECT prompt_version FROM privacy_deletions WHERE source_id = ? AND pair_key = ?",
+                ("yard", "260809/092443_150_031_P"),
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(remaining, 0)
+        self.assertIsNotNone(tombstone)
+        self.assertEqual(audit, ("bird-wildlife-sex-person-privacy-v3",))
+
     def test_monthly_image_limit_stops_before_call(self) -> None:
         client = FakeClient()
         classifier = BirdClassifier(self.library, client)
@@ -152,6 +209,25 @@ class ClassificationTests(unittest.TestCase):
 
         self.assertEqual(result.candidates, 2)
         self.assertEqual(client.calls, [])
+
+    def test_new_prompt_does_not_overwrite_manual_classification(self) -> None:
+        client = FakeClient()
+        first_classifier = BirdClassifier(self.library, client)
+        first_classifier.run(max_images=1, execute=True)
+        connection = sqlite3.connect(self.library / "catalog.sqlite3")
+        try:
+            connection.execute("UPDATE classifications SET provider = 'manual'")
+            connection.commit()
+        finally:
+            connection.close()
+
+        result = BirdClassifier(
+            self.library,
+            client,
+            prompt_version="new-wildlife-prompt",
+        ).run(max_images=3)
+
+        self.assertEqual(result.candidates, 2)
 
     def test_v1_catalog_is_migrated_without_losing_classification(self) -> None:
         connection = sqlite3.connect(self.library / "catalog.sqlite3")
@@ -263,20 +339,21 @@ class ResponsesClientTests(unittest.TestCase):
     def test_request_is_low_detail_bounded_structured_and_not_stored(self) -> None:
         captured: dict[str, object] = {}
         model_result = {
-            "is_bird": True,
-            "common_name": "Northern Cardinal",
-            "scientific_name": "Cardinalis cardinalis",
+            "person_detected": False,
+            "is_bird": False,
+            "common_name": "Eastern gray squirrel",
+            "scientific_name": "Sciurus carolinensis",
             "certainty": "certain",
             "alternatives": [],
-            "field_marks": ["red plumage"],
-            "notes": "Adult male.",
-            "sex": "male",
-            "age_class": "adult",
-            "bird_count": 1,
+            "field_marks": ["gray coat", "visible nipples"],
+            "notes": "Adult female squirrel.",
+            "sex": "female",
+            "age_class": "not_applicable",
+            "bird_count": 0,
             "behavior": "Feeding",
-            "sex_evidence": "Uniform bright red plumage.",
-            "age_evidence": "Adult male plumage.",
-            "interesting_fact": "Northern Cardinals sing throughout the year.",
+            "sex_evidence": "Visible nipples support female.",
+            "age_evidence": "",
+            "interesting_fact": "Eastern gray squirrels scatter-hoard food.",
         }
 
         def opener(request: object, *, timeout: float) -> FakeHTTPResponse:
@@ -304,9 +381,16 @@ class ResponsesClientTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             image = Path(temporary) / "bird.jpg"
             image.write_bytes(b"jpeg fixture")
+            context_image = Path(temporary) / "nearby.jpg"
+            context_image.write_bytes(b"nearby jpeg fixture")
             result = OpenAIResponsesClient(
                 "secret-test-key", opener=opener
-            ).classify(image, location="Toronto", captured_at="2026-08-09T09:24:43")
+            ).classify(
+                image,
+                location="Toronto",
+                captured_at="2026-08-09T09:24:43",
+                context_images=(context_image,),
+            )
 
         request = captured["request"]
         payload = json.loads(request.data)
@@ -314,21 +398,41 @@ class ResponsesClientTests(unittest.TestCase):
         self.assertEqual(payload["max_output_tokens"], 512)
         self.assertFalse(payload["store"])
         self.assertEqual(payload["input"][0]["content"][1]["detail"], "high")
+        self.assertIn(
+            "same visitor continues across a burst",
+            payload["input"][0]["content"][2]["text"],
+        )
+        self.assertEqual(payload["input"][0]["content"][3]["detail"], "low")
         self.assertTrue(payload["text"]["format"]["strict"])
         prompt = payload["input"][0]["content"][0]["text"]
         self.assertIn("The interesting_fact is the main editorial note", prompt)
         self.assertIn("capture date or location", prompt)
         self.assertIn("preferred fact angle", prompt)
         self.assertIn("female or juvenile Northern Cardinal", prompt)
-        self.assertIn("Identify the bird or other animal", prompt)
+        self.assertIn("birds and other wildlife", prompt)
+        self.assertIn("do not assume the visitor must be a bird", prompt)
         self.assertIn("squirrel, rat, mouse, raccoon", prompt)
+        self.assertIn("Infer sex for birds and other animals", prompt)
+        self.assertIn("visible sex-specific field mark", prompt)
+        self.assertIn("do not infer sex from size, behavior", prompt)
+        self.assertIn("For non-bird animals use not_applicable for age", prompt)
+        self.assertNotIn(
+            "For non-bird animals use not_applicable for sex and age", prompt
+        )
+        self.assertIn("person_detected true", prompt)
         self.assertIn("common_name 'No animal detected'", prompt)
         self.assertIn("Toronto", prompt)
         self.assertIn("2026-08-09T09:24:43", prompt)
-        self.assertEqual(result.common_name, "Northern Cardinal")
-        self.assertEqual(result.sex, "male")
-        self.assertEqual(result.bird_count, 1)
+        self.assertEqual(result.common_name, "Eastern gray squirrel")
+        self.assertEqual(result.sex, "female")
+        self.assertEqual(result.bird_count, 0)
+        self.assertEqual(result.sex_evidence, "Visible nipples support female.")
+        self.assertFalse(result.person_detected)
         self.assertNotIn("secret-test-key", request.data.decode("utf-8"))
+        self.assertEqual(
+            payload["text"]["format"]["name"],
+            "feeder_wildlife_identification",
+        )
 
 
 if __name__ == "__main__":

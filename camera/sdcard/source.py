@@ -38,6 +38,9 @@ class MediaSource(Protocol):
     def open_media(self, media: MediaObject) -> ContextManager[BinaryIO]:
         """Open an advertised object as a binary stream."""
 
+    def discard_suppressed(self, media: MediaObject) -> None:
+        """Discard a tombstoned object when this source is an ephemeral staging area."""
+
 
 def _validate_source_id(source_id: str) -> str:
     if not source_id or any(
@@ -51,9 +54,16 @@ def _validate_source_id(source_id: str) -> str:
 class FilesystemMediaSource:
     """Read the B4 layout from a mounted card or a read-only card image."""
 
-    def __init__(self, root: Path, source_id: str = "b4-yard") -> None:
+    def __init__(
+        self,
+        root: Path,
+        source_id: str = "b4-yard",
+        *,
+        delete_suppressed: bool = False,
+    ) -> None:
         self.root = root.expanduser().resolve()
         self.source_id = _validate_source_id(source_id)
+        self.delete_suppressed = delete_suppressed
         if not self.root.is_dir():
             raise FileNotFoundError(f"media source root does not exist: {self.root}")
 
@@ -108,3 +118,18 @@ class FilesystemMediaSource:
             raise ValueError("media source path is not a regular file")
         with resolved.open("rb") as stream:
             yield stream
+
+    def discard_suppressed(self, media: MediaObject) -> None:
+        """Delete only tombstoned files in explicitly ephemeral source trees."""
+        if not self.delete_suppressed:
+            return
+        relative = PurePosixPath(media.source_key)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("media source key escapes the source root")
+        path = self.root.joinpath(*relative.parts)
+        resolved = path.resolve(strict=True)
+        if self.root not in resolved.parents or resolved.is_symlink():
+            raise ValueError("media source path escapes the source root")
+        if not resolved.is_file():
+            raise ValueError("media source path is not a regular file")
+        resolved.unlink()

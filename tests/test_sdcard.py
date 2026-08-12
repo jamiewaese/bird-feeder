@@ -126,6 +126,35 @@ class ImporterTests(unittest.TestCase):
         self.assertEqual(result.unchanged, 1)
         self.assertEqual(copied_video.read_bytes(), b"replacement-video-data")
 
+    def test_ephemeral_source_deletes_files_suppressed_by_tombstone(self) -> None:
+        importer = MediaImporter(self.library_root)
+        importer.sync(self._source())
+        connection = sqlite3.connect(self.library_root / "catalog.sqlite3")
+        try:
+            connection.execute(
+                """
+                INSERT INTO deleted_pairs (source_id, pair_key, deleted_at)
+                VALUES ('yard', '260809/092443_150_031_P', '2026-08-11T00:00:00Z')
+                """
+            )
+            connection.execute("DELETE FROM media")
+            connection.commit()
+        finally:
+            connection.close()
+
+        result = importer.sync(
+            FilesystemMediaSource(
+                self.source_root,
+                "yard",
+                delete_suppressed=True,
+            )
+        )
+
+        self.assertEqual(result.suppressed, 2)
+        self.assertEqual(result.failed, 0)
+        self.assertFalse(self.snapshot.exists())
+        self.assertFalse(self.video.exists())
+
     def test_dry_run_does_not_create_library(self) -> None:
         result = MediaImporter(self.library_root).sync(self._source(), dry_run=True)
         self.assertEqual(result.pending, 2)

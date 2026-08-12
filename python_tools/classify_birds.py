@@ -1,4 +1,4 @@
-"""Classify a bounded batch of imported bird-feeder snapshots."""
+"""Classify a bounded batch of imported bird-feeder wildlife snapshots."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ MODEL = "gpt-5.4-mini"
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Identify birds in unclassified snapshots. The default is a no-cost "
+            "Identify birds and other wildlife in unclassified snapshots. The default is a no-cost "
             "preview; --execute is required to contact OpenAI."
         )
     )

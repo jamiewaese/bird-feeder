@@ -133,6 +133,9 @@ class AnimalSummary:
     common_name: str
     scientific_name: str | None
     video_count: int
+    male_video_count: int
+    female_video_count: int
+    unknown_sex_video_count: int
     thumbnail_path: str | None
 
 
@@ -216,10 +219,18 @@ def _animal_summaries(pairs: list[GalleryPair]) -> list[AnimalSummary]:
                 "common_name": pair.common_name,
                 "scientific_name": pair.scientific_name,
                 "video_count": 0,
+                "male_video_count": 0,
+                "female_video_count": 0,
+                "unknown_sex_video_count": 0,
                 "thumbnail_path": None,
             },
         )
         summary["video_count"] = int(summary["video_count"]) + 1
+        sex_count_key = {
+            "male": "male_video_count",
+            "female": "female_video_count",
+        }.get(pair.sex or "", "unknown_sex_video_count")
+        summary[sex_count_key] = int(summary[sex_count_key]) + 1
         if summary["thumbnail_path"] is None and pair.snapshot_path:
             summary["thumbnail_path"] = pair.snapshot_path
 
@@ -718,6 +729,16 @@ def _classification_label(
             f"{note_sections}"
         )
     elif _is_animal_visitor(pair):
+        sex = {
+            "male": "Male",
+            "female": "Female",
+            "indeterminate": "Unknown",
+        }.get(pair.sex or "", "—")
+        sex_html = (
+            '<dl class="classification-stats classification-stats-animal">'
+            f"<div><dt>Sex</dt><dd>{html.escape(sex)}</dd></div>"
+            "</dl>"
+        )
         behavior_html = (
             '<div class="observation"><span>Observed</span>'
             f"<p>{html.escape(pair.behavior)}</p></div>"
@@ -732,10 +753,13 @@ def _classification_label(
         )
         if behavior_html or fact_html:
             detail_html = (
+                f"{sex_html}"
                 '<div class="classification-notes">'
                 f"{fact_html}{behavior_html}"
                 "</div>"
             )
+        else:
+            detail_html = sex_html
     elif pair.classification_notes or pair.behavior:
         description = pair.classification_notes or pair.behavior or ""
         detail_html = f'<p class="empty-frame-note">{html.escape(description)}</p>'
@@ -874,6 +898,11 @@ def _shared_script(csrf_token: str, *, deletes_enabled: bool = True) -> str:
     female: { label: "Female", color: "#bd6b87", dash: "5 3" },
     unknown: { label: "Unknown sex", color: "#858177", dash: "2 3" }
   };
+  const animalActivityStyles = {
+    male: activitySexStyles.male,
+    female: activitySexStyles.female,
+    unknown: { label: "Unknown sex", color: "#8b603b", dash: "" }
+  };
 
   const hourlyTimeLabel = (hour) => {
     const formatHour = (value) => {
@@ -897,12 +926,15 @@ def _shared_script(csrf_token: str, *, deletes_enabled: bool = True) -> str:
     hourlyActivityCards = cards;
     const species = new Map();
     cards.forEach((card) => {
-      if (card.dataset.hasVideo !== "true" || card.dataset.isBird !== "true") return;
+      if (card.dataset.hasVideo !== "true") return;
+      const isBird = card.dataset.isBird === "true";
+      if (!isBird && card.dataset.isAnimal !== "true") return;
       const key = card.dataset.species;
       if (!key) return;
       const item = species.get(key) || {
         key,
         name: card.dataset.speciesLabel || key,
+        isBird,
         monthlyVideos: Array(12).fill(0),
         hourlyBySex: {
           male: Array(24).fill(0),
@@ -917,14 +949,16 @@ def _shared_script(csrf_token: str, *, deletes_enabled: bool = True) -> str:
       }
       const hour = Number(card.dataset.timestamp.slice(8, 10));
       if (!Number.isInteger(hour) || hour < 0 || hour > 23) return;
-      const birdCount = Math.max(1, Number(card.dataset.birdCount) || 1);
+      const sightingCount = isBird
+        ? Math.max(1, Number(card.dataset.birdCount) || 1)
+        : 1;
       const sex = card.dataset.sex === "male" || card.dataset.sex === "female"
         ? card.dataset.sex
         : "unknown";
-      item.hourlyBySex[sex][hour] += birdCount;
+      item.hourlyBySex[sex][hour] += sightingCount;
     });
 
-    document.querySelectorAll("[data-hourly-activity]").forEach((chart) => {
+    document.querySelectorAll("[data-hourly-activity]").forEach((chart, chartIndex) => {
       const item = species.get(chart.dataset.chartSpecies);
       const svg = chart.querySelector("[data-hourly-svg]");
       const detail = chart.querySelector("[data-hourly-detail]");
@@ -936,13 +970,18 @@ def _shared_script(csrf_token: str, *, deletes_enabled: bool = True) -> str:
       svg.replaceChildren();
 
       const title = createSvgElement("title");
-      title.textContent = `${item.name} sightings by hour, sex, and month`;
+      title.textContent = item.isBird
+        ? `${item.name} sightings by hour, sex, and month`
+        : `${item.name} sightings by hour, sex, and month`;
       const description = createSvgElement("desc");
       const monthNames = [
         "January", "February", "March", "April", "May", "June",
         "July", "August", "September", "October", "November", "December"
       ];
-      description.textContent = "Blue solid lines indicate males, pink dashed lines indicate females, and gray dotted lines indicate unknown sex. Shaded areas indicate nighttime hours; moon and sun icons label nighttime and daytime. Monthly video counts: " +
+      const seriesDescription = item.isBird
+        ? "Blue solid lines indicate males, pink dashed lines indicate females, and gray dotted lines indicate unknown sex. "
+        : "Blue solid lines indicate males, pink dashed lines indicate females, and the brown solid line indicates unknown-sex sightings. ";
+      description.textContent = seriesDescription + "Shaded areas indicate nighttime hours; moon and sun icons label nighttime and daytime. Monthly video counts: " +
         item.monthlyVideos.map((count, month) => `${monthNames[month]}: ${count}`).join(", ") + ".";
       svg.append(title, description);
 
@@ -960,13 +999,60 @@ def _shared_script(csrf_token: str, *, deletes_enabled: bool = True) -> str:
       const yPosition = (value) => top + plotHeight - (value / yMax) * plotHeight;
       svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
+      const nightTransitionHours = 1.5;
+      const dawnGradientId = `activity-night-dawn-${chartIndex}`;
+      const duskGradientId = `activity-night-dusk-${chartIndex}`;
+      const nightDefs = createSvgElement("defs");
+      const dawnGradient = createSvgElement("linearGradient", {
+        id: dawnGradientId,
+        gradientUnits: "userSpaceOnUse",
+        x1: xPosition(6 - nightTransitionHours),
+        x2: xPosition(6),
+        y1: 0,
+        y2: 0
+      });
+      dawnGradient.append(
+        createSvgElement("stop", {
+          offset: "0%", "stop-color": "#4c586e", "stop-opacity": "0.09"
+        }),
+        createSvgElement("stop", {
+          offset: "100%", "stop-color": "#4c586e", "stop-opacity": "0"
+        })
+      );
+      const duskGradient = createSvgElement("linearGradient", {
+        id: duskGradientId,
+        gradientUnits: "userSpaceOnUse",
+        x1: xPosition(20),
+        x2: xPosition(20 + nightTransitionHours),
+        y1: 0,
+        y2: 0
+      });
+      duskGradient.append(
+        createSvgElement("stop", {
+          offset: "0%", "stop-color": "#4c586e", "stop-opacity": "0"
+        }),
+        createSvgElement("stop", {
+          offset: "100%", "stop-color": "#4c586e", "stop-opacity": "0.09"
+        })
+      );
+      nightDefs.append(dawnGradient, duskGradient);
+      svg.append(nightDefs);
+
       const night = createSvgElement("g", { class: "activity-night", "aria-hidden": "true" });
       night.append(
         createSvgElement("rect", {
-          x: left, y: top, width: xPosition(6) - left, height: plotHeight
+          x: left,
+          y: top,
+          width: xPosition(6) - left,
+          height: plotHeight,
+          fill: `url(#${dawnGradientId})`
         }),
         createSvgElement("rect", {
-          x: xPosition(20), y: top, width: width - right - xPosition(20), height: plotHeight
+          x: xPosition(20),
+          y: top,
+          width: width - right - xPosition(20),
+          height: plotHeight,
+          fill: `url(#${duskGradientId})`
         })
       );
       svg.append(night);
@@ -978,15 +1064,20 @@ def _shared_script(csrf_token: str, *, deletes_enabled: bool = True) -> str:
       });
       const moonStars = createSvgElement("g", {
         class: "activity-daypart-icon",
-        transform: `translate(${left + 6} ${top + 5}) scale(0.0625)`
+        transform: `translate(${left + 6} ${top + 5}) scale(0.078125)`
       });
       moonStars.append(createSvgElement("path", { d: moonStarsPath }));
+      const eveningMoonStars = createSvgElement("g", {
+        class: "activity-daypart-icon",
+        transform: `translate(${xPosition(20) + 6} ${top + 5}) scale(0.078125)`
+      });
+      eveningMoonStars.append(createSvgElement("path", { d: moonStarsPath }));
       const sun = createSvgElement("g", {
         class: "activity-daypart-icon",
-        transform: `translate(${xPosition(6) + 8} ${top + 5}) scale(0.0625)`
+        transform: `translate(${xPosition(6) + 8} ${top + 5}) scale(0.078125)`
       });
       sun.append(createSvgElement("path", { d: sunPath }));
-      daypartIcons.append(moonStars, sun);
+      daypartIcons.append(moonStars, eveningMoonStars, sun);
       svg.append(daypartIcons);
 
       const grid = createSvgElement("g", { class: "activity-grid", "aria-hidden": "true" });
@@ -1054,13 +1145,17 @@ def _shared_script(csrf_token: str, *, deletes_enabled: bool = True) -> str:
         svg.querySelectorAll(".activity-point[data-selected='true']")
           .forEach((candidate) => candidate.removeAttribute("data-selected"));
         point.dataset.selected = "true";
-        const birds = item.hourlyBySex[sex][hour];
-        const sexLabel = activitySexStyles[sex].label;
-        detail.textContent = `${item.name}, ${sexLabel.toLowerCase()}, ${hourlyTimeLabel(hour)}: ${birds} ${birds === 1 ? "bird" : "birds"}`;
-        tooltip.textContent = `${sexLabel} · ${hourlyTimeLabel(hour)} · ${birds}`;
+        const sightings = item.hourlyBySex[sex][hour];
+        const style = item.isBird ? activitySexStyles[sex] : animalActivityStyles[sex];
+        detail.textContent = item.isBird
+          ? `${item.name}, ${style.label.toLowerCase()}, ${hourlyTimeLabel(hour)}: ${sightings} ${sightings === 1 ? "bird" : "birds"}`
+          : `${item.name}, ${style.label.toLowerCase()}, ${hourlyTimeLabel(hour)}: ${sightings} ${sightings === 1 ? "sighting" : "sightings"}`;
+        tooltip.textContent = item.isBird
+          ? `${style.label} · ${hourlyTimeLabel(hour)} · ${sightings}`
+          : `${style.label} · ${hourlyTimeLabel(hour)} · ${sightings} ${sightings === 1 ? "sighting" : "sightings"}`;
         tooltip.hidden = false;
         tooltip.style.left = `${Math.max(54, Math.min(plot.clientWidth - 54, xPosition(hour)))}px`;
-        tooltip.style.top = `${yPosition(birds)}px`;
+        tooltip.style.top = `${yPosition(sightings)}px`;
       };
 
       const hidePoint = () => {
@@ -1076,7 +1171,7 @@ def _shared_script(csrf_token: str, *, deletes_enabled: bool = True) -> str:
           .map((value, hour) => value > 0 ? hour : -1)
           .filter((hour) => hour >= 0);
         if (observedHours.length === 0) return;
-        const style = activitySexStyles[sex];
+        const style = item.isBird ? activitySexStyles[sex] : animalActivityStyles[sex];
         const firstHour = Math.max(0, observedHours[0] - 1);
         const lastHour = Math.min(23, observedHours[observedHours.length - 1] + 1);
         const group = createSvgElement("g", {
@@ -1103,7 +1198,9 @@ def _shared_script(csrf_token: str, *, deletes_enabled: bool = True) -> str:
             r: value === greatest ? 3.5 : 2.5,
             role: "button",
             tabindex: "0",
-            "aria-label": `${item.name}, ${style.label.toLowerCase()}, ${hourlyTimeLabel(hour)}: ${value} ${value === 1 ? "bird" : "birds"}`
+            "aria-label": item.isBird
+              ? `${item.name}, ${style.label.toLowerCase()}, ${hourlyTimeLabel(hour)}: ${value} ${value === 1 ? "bird" : "birds"}`
+              : `${item.name}, ${style.label.toLowerCase()}, ${hourlyTimeLabel(hour)}: ${value} ${value === 1 ? "sighting" : "sightings"}`
           });
           point.addEventListener("mouseenter", () => showPoint(point, sex, hour));
           point.addEventListener("mouseleave", hidePoint);
@@ -1420,6 +1517,9 @@ def _shared_script(csrf_token: str, *, deletes_enabled: bool = True) -> str:
         `${nextExpanded ? "Collapse" : "Expand"} ${sectionToggle.dataset.sectionLabel}`
       );
       content.hidden = !nextExpanded;
+      if (nextExpanded) {
+        window.requestAnimationFrame(() => renderHourlyActivity(hourlyActivityCards));
+      }
       return;
     }
 
@@ -1433,7 +1533,8 @@ def _shared_script(csrf_token: str, *, deletes_enabled: bool = True) -> str:
       const sameSelection = activeSpecies === species && activeSex === sex;
       activeSpecies = species;
       activeSex = sameSelection ? "" : sex;
-      document.querySelector("[data-filter]").value = "birds";
+      document.querySelector("[data-filter]").value =
+        speciesButton.dataset.visitorKind === "animal" ? "animals" : "birds";
       refreshArchive({ resetPage: true });
       document.querySelector("[data-gallery]")?.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
@@ -1600,6 +1701,7 @@ def _shared_styles() -> str:
     .classification-stats div + div { border-left: 1px solid rgb(23 54 43 / 9%); }
     .classification-stats dt { margin: 0 0 2px; color: var(--muted); font-size: .73rem; font-weight: 600; }
     .classification-stats dd { margin: 0; overflow: hidden; color: var(--ink); font-size: .93rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+    .classification-stats-animal { grid-template-columns: minmax(0, 1fr); }
     .classification-notes { display: grid; gap: 10px; margin-top: 14px; }
     .classification-fact { min-width: 0; margin: 0; padding: 15px 16px; border: 1px solid rgb(36 121 86 / 18%); border-radius: 14px; background: var(--leaf-pale); }
     .classification-fact span { color: var(--leaf-dark); font-size: .78rem; font-weight: 800; }
@@ -1615,11 +1717,191 @@ def _shared_styles() -> str:
 """
 
 
+def _about_species_card(pairs: list[GalleryPair]) -> str:
+    """Render a real, code-native Northern Cardinal summary card for the story."""
+    cardinal_pairs = [
+        pair
+        for pair in pairs
+        if pair.is_bird is True
+        and pair.video_path is not None
+        and (pair.common_name or "").strip().casefold() == "northern cardinal"
+    ]
+    hourly = {
+        "male": [0] * 24,
+        "female": [0] * 24,
+        "unknown": [0] * 24,
+    }
+    monthly = [0] * 12
+    thumbnail_path: str | None = None
+
+    if cardinal_pairs:
+        for pair in cardinal_pairs:
+            sex = pair.sex if pair.sex in {"male", "female"} else "unknown"
+            captured = pair.captured_datetime
+            if captured is not None:
+                hourly[sex][captured.hour] += max(1, pair.bird_count or 1)
+                monthly[captured.month - 1] += 1
+            if thumbnail_path is None and pair.snapshot_path:
+                thumbnail_path = pair.snapshot_path
+        male_count = sum(pair.sex == "male" for pair in cardinal_pairs)
+        female_count = sum(pair.sex == "female" for pair in cardinal_pairs)
+        unknown_count = len(cardinal_pairs) - male_count - female_count
+        video_count = len(cardinal_pairs)
+    else:
+        # Keep the example useful in an empty development archive. Production
+        # replaces these values with the current Northern Cardinal observations.
+        hourly["male"] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4, 3, 2, 4, 0, 2, 3, 0, 4, 1, 0, 0, 0]
+        hourly["female"] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 8, 0, 6, 10, 0, 0, 0]
+        hourly["unknown"][20] = 1
+        monthly[7] = 68
+        male_count, female_count, unknown_count, video_count = 28, 39, 1, 68
+
+    thumbnail = (
+        f'<img src="{_media_url(thumbnail_path)}" alt="" loading="lazy">'
+        if thumbnail_path
+        else '<span class="species-card-placeholder" aria-hidden="true">⌁</span>'
+    )
+    sex_parts = []
+    for sex, count in (
+        ("male", male_count),
+        ("female", female_count),
+        ("unknown", unknown_count),
+    ):
+        if count:
+            sex_parts.append(
+                f'<span class="sex-key sex-key-{sex}">{count} {sex}</span>'
+            )
+    sex_breakdown = '<span class="sex-separator" aria-hidden="true"> · </span>'.join(sex_parts)
+
+    width, height = 760, 154
+    left, right, top, bottom = 30, 12, 9, 51
+    plot_width = width - left - right
+    plot_height = height - top - bottom
+    greatest = max(value for values in hourly.values() for value in values)
+    y_max = 4 if greatest <= 4 else 8 if greatest <= 8 else 16 if greatest <= 16 else ((greatest + 4) // 5) * 5
+
+    def x_position(hour: int) -> float:
+        return left + (hour / 23) * plot_width
+
+    def y_position(value: int) -> float:
+        return top + plot_height - (value / y_max) * plot_height
+
+    def hour_label(hour: int) -> str:
+        def format_hour(value: int) -> str:
+            if value == 0:
+                return "12 AM"
+            if value == 12:
+                return "12 PM"
+            return f"{value - 12 if value > 12 else value} {'PM' if value >= 12 else 'AM'}"
+
+        return f"{format_hour(hour)}–{format_hour((hour + 1) % 24)}"
+
+    svg_parts = [
+        '<svg class="activity-svg" viewBox="0 0 760 154" role="img" '
+        'aria-labelledby="about-cardinal-chart-title about-cardinal-chart-description">',
+        '<title id="about-cardinal-chart-title">Northern Cardinal sightings by hour, sex, and month</title>',
+        '<desc id="about-cardinal-chart-description">Blue solid lines indicate males, pink dashed lines indicate females, and gray dotted lines indicate unknown sex.</desc>',
+        f'<rect class="activity-night" x="{left}" y="{top}" width="{x_position(6) - left:.2f}" height="{plot_height}" />',
+        f'<rect class="activity-night" x="{x_position(20):.2f}" y="{top}" width="{width - right - x_position(20):.2f}" height="{plot_height}" />',
+        f'<text class="activity-daypart" x="{left + 8}" y="{top + 16}">☾</text>',
+        f'<text class="activity-daypart" x="{x_position(6) + 8:.2f}" y="{top + 16}">☀</text>',
+        f'<text class="activity-daypart" x="{x_position(20) + 8:.2f}" y="{top + 16}">☾</text>',
+    ]
+    for value in (0, y_max):
+        y = y_position(value)
+        svg_parts.append(
+            f'<line class="activity-grid-line" x1="{left}" y1="{y:.2f}" x2="{width - right}" y2="{y:.2f}" />'
+        )
+        svg_parts.append(
+            f'<text class="activity-axis-label" x="{left - 7}" y="{y + 4:.2f}" text-anchor="end">{value}</text>'
+        )
+    for hour, label, anchor in (
+        (0, "12 AM", "start"),
+        (6, "6 AM", "middle"),
+        (12, "Noon", "middle"),
+        (18, "6 PM", "middle"),
+        (23, "11 PM", "end"),
+    ):
+        svg_parts.append(
+            f'<text class="activity-axis-label" x="{x_position(hour):.2f}" y="{top + plot_height + 18}" text-anchor="{anchor}">{label}</text>'
+        )
+
+    month_labels = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+    month_maximum = max(1, *monthly)
+    month_width = plot_width / 12
+    for month, (label, count) in enumerate(zip(month_labels, monthly)):
+        intensity = 0.05 if count == 0 else 0.16 + 0.72 * (count / month_maximum)
+        cell_x = left + month * month_width + 1
+        label_x = left + (month + 0.5) * month_width
+        svg_parts.append(
+            f'<rect class="activity-month-cell" x="{cell_x:.2f}" y="{height - 22}" width="{max(1, month_width - 2):.2f}" height="18" rx="3" opacity="{intensity:.3f}"><title>{label.title()}: {count} videos</title></rect>'
+        )
+        svg_parts.append(
+            f'<text class="activity-month-label" x="{label_x:.2f}" y="{height - 9}" text-anchor="middle" data-on-dark="{str(intensity >= 0.55).lower()}">{label}</text>'
+        )
+
+    series_styles = {
+        "unknown": ("#858177", "2 3", "Unknown sex"),
+        "female": ("#bd6b87", "5 3", "Female"),
+        "male": ("#4f739d", "", "Male"),
+    }
+    for sex in ("unknown", "female", "male"):
+        values = hourly[sex]
+        observed = [hour for hour, value in enumerate(values) if value > 0]
+        if not observed:
+            continue
+        first_hour = max(0, observed[0] - 1)
+        last_hour = min(23, observed[-1] + 1)
+        path = " ".join(
+            f"{'M' if hour == first_hour else 'L'}{x_position(hour):.2f} {y_position(values[hour]):.2f}"
+            for hour in range(first_hour, last_hour + 1)
+        )
+        color, dash, label = series_styles[sex]
+        dash_attribute = f' stroke-dasharray="{dash}"' if dash else ""
+        svg_parts.append(
+            f'<path class="activity-line" d="{path}" style="--series-color: {color}"{dash_attribute} />'
+        )
+        for hour, value in enumerate(values):
+            if value == 0:
+                continue
+            count_label = "bird" if value == 1 else "birds"
+            svg_parts.append(
+                f'<circle class="activity-point" cx="{x_position(hour):.2f}" cy="{y_position(value):.2f}" r="{3.5 if value == greatest else 2.5}" style="--series-color: {color}" tabindex="0" role="img" aria-label="Northern Cardinal, {label.lower()}, {hour_label(hour)}: {value} {count_label}"><title>{label} · {hour_label(hour)} · {value}</title></circle>'
+            )
+    svg_parts.append("</svg>")
+
+    return (
+        '<figure class="species-card-example">'
+        '<div class="species-card-example-scroll" tabindex="0" '
+        'aria-label="Example Northern Cardinal species card">'
+        '<div class="species-row species-card-shell about-species-card">'
+        '<div class="species-card">'
+        '<div class="species-card-main">'
+        f'<span class="species-card-thumbnail">{thumbnail}</span>'
+        '<span class="species-card-copy">'
+        '<strong>Northern Cardinal</strong>'
+        '<span class="species-card-scientific"><i>Cardinalis cardinalis</i></span>'
+        '<span class="species-card-count">'
+        f'<b>{video_count}</b> <span>{"video" if video_count == 1 else "videos"}</span>'
+        '</span></span></div>'
+        f'<div class="species-card-sex">{sex_breakdown}</div>'
+        '</div>'
+        '<section class="activity-chart" aria-label="Northern Cardinal activity chart">'
+        f'<div class="activity-plot">{"".join(svg_parts)}</div>'
+        '</section>'
+        '</div></div>'
+        '<figcaption>The female Northern Cardinal is more active late in the day, at least this one is.</figcaption>'
+        '</figure>'
+    )
+
+
 def _render_about(
     *,
     photo_available: bool = False,
     pi_photo_available: bool = False,
     amazon_photo_available: bool = False,
+    subscription_photo_available: bool = False,
+    pairs: list[GalleryPair] | None = None,
 ) -> bytes:
     """Render the public project story and a plain-language system overview."""
     feeder_photo = (
@@ -1669,6 +1951,13 @@ def _render_about(
         if amazon_photo_available
         else ""
     )
+    subscription_photo = (
+        '<img src="/about-subscription.jpg" '
+        'alt="The feeder app showing a 360-day cloud-storage subscription for $59.99">'
+        if subscription_photo_available
+        else ""
+    )
+    species_card = _about_species_card(pairs or [])
 
     document = """<!doctype html>
 <html lang="en">
@@ -1684,14 +1973,57 @@ __SHARED_STYLES__
     .about-shell { width: min(1180px, 100%); margin: 0 auto; padding: 36px 28px 80px; }
     .about-hero { max-width: 860px; padding: 38px 0 58px; border-bottom: 1px solid rgb(23 54 43 / 12%); }
     .about-hero h1 { margin: 8px 0 20px; font-size: clamp(3rem, 6vw, 5.4rem); font-weight: 800; letter-spacing: -.045em; line-height: .96; }
-    .about-intro { max-width: 760px; margin: 0; color: #415b51; font-size: clamp(1.08rem, 2vw, 1.35rem); line-height: 1.6; }
+    .about-tldr { display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: baseline; max-width: 760px; margin-top: 28px; border-left: 3px solid var(--leaf); padding: 15px 18px; background: var(--leaf-pale); }
+    .about-tldr strong { color: var(--leaf-dark); font-size: .78rem; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
+    .about-tldr p { margin: 0; color: #344d43; line-height: 1.55; }
     .story-grid { display: grid; grid-template-columns: minmax(190px, .55fr) minmax(0, 1.45fr); gap: 56px; padding: 64px 0 72px; }
     .section-label { margin: 0; color: var(--leaf); font-size: .76rem; font-weight: 800; text-transform: uppercase; }
     .story-grid h2, .diagram-heading h2, .resources-heading h2 { margin: 8px 0 0; font-size: clamp(1.9rem, 3.4vw, 3rem); line-height: 1.05; }
+    .story-grid > div, .story-copy { min-width: 0; }
+    .about-shell figure { max-width: 100%; box-sizing: border-box; }
     .story-copy { max-width: 720px; color: #344d43; font-size: 1.04rem; line-height: 1.72; }
     .story-copy p { margin: 0 0 1.35em; }
     .story-copy h3 { margin: 2em 0 .5em; color: var(--leaf-dark); font-size: 1.22rem; line-height: 1.25; }
     .story-copy h3:first-child { margin-top: 0; }
+    .story-photo { width: 100%; max-width: 100%; box-sizing: border-box; overflow: hidden; margin: 1.8em 0; border-radius: 24px; background: #dce7dd; box-shadow: var(--shadow); }
+    .story-photo > img { width: 100%; max-height: 540px; aspect-ratio: 4 / 3; display: block; object-fit: cover; object-position: center; }
+    .story-photo figcaption { padding: 14px 18px; color: var(--muted); background: var(--card); font-size: .86rem; line-height: 1.5; }
+    .subscription-shot { width: min(330px, 100%); overflow: hidden; margin: 1.8em auto; border: 1px solid rgb(23 54 43 / 12%); border-radius: 24px; background: #f7f9f7; box-shadow: var(--shadow); }
+    .subscription-shot > img { width: 100%; display: block; }
+    .subscription-shot figcaption { padding: 14px 18px; color: var(--muted); background: var(--card); font-size: .86rem; line-height: 1.5; }
+    .species-card-example { margin: .5em 0 2.2em; }
+    .species-card-example-scroll { width: 100%; overflow-x: auto; border-radius: 18px; }
+    .about-species-card { display: grid; width: 720px; max-width: none; grid-template-columns: 270px 450px; overflow: hidden; border: 1px solid rgb(23 54 43 / 13%); border-radius: 18px; color: var(--ink); background: linear-gradient(135deg, #fffef9 0%, #fbfcf7 100%); box-shadow: 0 5px 18px rgb(27 58 46 / 7%); }
+    .about-species-card .species-card { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr); gap: 0; min-width: 0; align-items: center; padding: 11px 0; background: transparent; }
+    .about-species-card .species-card-main { display: grid; width: 100%; grid-template-columns: 76px minmax(0, 1fr); gap: 12px; min-width: 0; align-items: center; padding: 0 11px; }
+    .about-species-card .species-card-thumbnail { position: relative; display: block; width: 76px; aspect-ratio: 1; overflow: hidden; border: 2px solid rgb(255 255 255 / 92%); border-radius: 14px; background: #dfe7dc; box-shadow: 0 2px 8px rgb(27 58 46 / 14%), 0 0 0 1px rgb(23 54 43 / 7%); }
+    .about-species-card .species-card-thumbnail img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .about-species-card .species-card-placeholder { display: grid; width: 100%; height: 100%; place-items: center; color: var(--leaf); font-size: 1.8rem; }
+    .about-species-card .species-card-copy { display: grid; min-width: 0; align-content: center; gap: 2px; }
+    .about-species-card .species-card-copy strong { overflow: hidden; font-size: 1.03rem; font-weight: 780; line-height: 1.12; text-overflow: ellipsis; }
+    .about-species-card .species-card-scientific { overflow: hidden; color: var(--muted); font-size: .77rem; text-overflow: ellipsis; white-space: nowrap; }
+    .about-species-card .species-card-count { display: inline-flex; width: fit-content; align-items: baseline; gap: 4px; margin-top: 6px; border: 1px solid rgb(36 121 86 / 12%); border-radius: 999px; padding: 3px 8px; color: var(--muted); background: rgb(36 121 86 / 6%); font-size: .7rem; line-height: 1; }
+    .about-species-card .species-card-count b { color: var(--leaf-dark); font-size: .86rem; font-variant-numeric: tabular-nums; }
+    .about-species-card .species-card-sex { min-width: 0; padding: 8px 12px 0; font-size: .72rem; line-height: 1.25; font-variant-numeric: tabular-nums; }
+    .about-species-card .sex-key { display: inline-block; margin-block: -4px; border: 1px solid transparent; border-radius: 999px; padding: 3px 7px; background: transparent; font: inherit; font-weight: 700; white-space: nowrap; }
+    .about-species-card .sex-key-male { color: #4f739d; }
+    .about-species-card .sex-key-female { color: #bd6b87; }
+    .about-species-card .sex-key-unknown { color: #858177; }
+    .about-species-card .sex-separator { color: var(--muted); font-weight: 500; }
+    .about-species-card .activity-chart { position: relative; width: 100%; min-width: 0; min-height: 154px; overflow: hidden; border-left: 1px solid rgb(23 54 43 / 8%); }
+    .about-species-card .activity-plot { position: relative; width: 100%; height: 100%; overflow: hidden; background: linear-gradient(180deg, rgb(247 249 245 / 72%), rgb(255 254 249 / 18%) 70%); }
+    .about-species-card .activity-svg { width: 100%; height: 100%; display: block; overflow: hidden; }
+    .about-species-card .activity-night { fill: #4c586e; opacity: .08; }
+    .about-species-card .activity-daypart { fill: #66776f; font-size: 14px; opacity: .52; }
+    .about-species-card .activity-grid-line { stroke: rgb(23 54 43 / 9%); stroke-width: 1; }
+    .about-species-card .activity-axis-label { fill: #77837d; font-size: 10.5px; }
+    .about-species-card .activity-month-cell { fill: #315a48; }
+    .about-species-card .activity-month-label { fill: #425149; font-size: 9.5px; font-weight: 650; pointer-events: none; }
+    .about-species-card .activity-month-label[data-on-dark="true"] { fill: #fffef9; }
+    .about-species-card .activity-line { fill: none; stroke: var(--series-color); stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
+    .about-species-card .activity-point { fill: #fffef9; stroke: var(--series-color); stroke-width: 2; outline: none; }
+    .about-species-card .activity-point:hover, .about-species-card .activity-point:focus { r: 5px; fill: var(--series-color); stroke: var(--card); }
+    .species-card-example figcaption { margin-top: 9px; color: var(--muted); font-size: .82rem; line-height: 1.45; }
     .photo-block { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(260px, .7fr); gap: 26px; align-items: stretch; margin-bottom: 76px; }
     .photo-block-reverse { grid-template-columns: minmax(260px, .7fr) minmax(0, 1.3fr); }
     .photo-block figure { min-height: 420px; aspect-ratio: 4 / 3; overflow: hidden; margin: 0; border-radius: 26px; background: #dce7dd; box-shadow: var(--shadow); }
@@ -1748,9 +2080,13 @@ __SHARED_STYLES__
       .about-shell { padding: 20px 16px 52px; }
       .about-hero { padding: 22px 0 46px; }
       .about-hero h1 { font-size: clamp(2.7rem, 13vw, 3.6rem); }
+      .about-tldr { grid-template-columns: 1fr; gap: 6px; }
       .story-grid { padding: 48px 0; }
       .photo-block, .diagram-section { margin-bottom: 52px; }
       .photo-block figure, .photo-placeholder { min-height: 330px; }
+      .about-species-card { width: 100%; grid-template-columns: 1fr; }
+      .about-species-card .species-card { padding: 14px 0; }
+      .about-species-card .activity-chart { min-height: 170px; border-top: 1px solid rgb(23 54 43 / 8%); border-left: 0; }
       .process-grid, .link-list { grid-template-columns: 1fr; }
       .amazon-shot { min-height: 240px; }
       .about-footer { display: grid; }
@@ -1764,8 +2100,11 @@ __SHARED_STYLES__
   <main class="about-shell">
     <header class="about-hero">
       <p class="eyebrow">About this project</p>
-      <h1>About Backyard Birds</h1>
-      <p class="about-intro">My brother gave me a bird feeder camera for my birthday. I liked the camera, but I didn’t want to pay $70 a year to download its photos. This site is the result.</p>
+      <h1>What is this?</h1>
+      <div class="about-tldr" aria-label="Summary">
+        <strong>TL;DR</strong>
+        <p>A ten-year-old Raspberry Pi downloads each day’s bird photos and videos, sends the stills to OpenAI for identification, and runs this gallery from my basement.</p>
+      </div>
     </header>
 
     <section class="story-grid" aria-labelledby="story-title">
@@ -1775,39 +2114,42 @@ __SHARED_STYLES__
       </div>
       <div class="story-copy">
         <h3>The camera</h3>
-        <p>My brother gave me this bird feeder camera for my birthday. It isn’t a name brand, but it’s a good idea: when a bird lands at the feeder, the camera saves a photo and a short video to its microSD card. The app also includes species classification.</p>
-
-        <h3>The subscription</h3>
-        <p>What wasn’t made clear up front was that downloading the photos to my phone required a subscription of about $70 a year. I thought that was a lot to pay for access to files already stored on a camera I owned.</p>
+        <p>My brother bought the feeder on Amazon. It’s one of several nearly identical, no-name models sold there. When a bird lands, it saves a photo and a short video to its microSD card. It also comes with an iOS app that can identify the species.</p>
+        <p>What the box, the manual and the Amazon listing don’t mention is that downloading those photos through the app requires a subscription of $59.99 a year. I thought that was a lot to pay for access to files already stored on a camera I owned.</p>
+        <figure class="subscription-shot">
+          __SUBSCRIPTION_PHOTO__
+          <figcaption>The app’s 360-day cloud-storage plan is $59.99.</figcaption>
+        </figure>
+        <figure class="story-photo">
+          __FEEDER_PHOTO__
+          <figcaption>The feeder in my backyard. The camera is built into the front and points at the seed tray.</figcaption>
+        </figure>
         <p>Sure, I could also remove the microSD card from the camera every couple of days and copy the images manually, but that’s so old school.</p>
 
         <h3>Using an old Raspberry Pi</h3>
-        <p>I had a Raspberry Pi 3 that was about ten years old. I asked Codex whether we could use it to log into the camera every night, copy the files from the SD card, send an image from each recording to OpenAI for identification, and show the results in a web gallery. He thought it was a great idea, but he thinks everything is a great idea.</p>
+        <p>I had a Raspberry Pi 3 that was about ten years old. I asked Codex whether it could take the app out of the loop and handle the downloads instead. He thought it was a great idea, but he thinks everything is a great idea.</p>
 
         <h3>Getting files off the camera</h3>
-        <p>This was the difficult part. The camera has no public API and it doesn’t provide a normal web, FTP, RTSP, or ONVIF interface. The app finds it over the local network and then communicates using a proprietary UDP protocol. The packet data looked encrypted or heavily obfuscated.</p>
-        <p>The files on the SD card turned out to be normal JPEGs and MP4s. We did not decrypt the network protocol ourselves. We adapted the manufacturer’s Android transport library so it could establish a session on the Pi, then wrote the code that lists events, requests files, validates chunks, retries missing data, and imports complete files into the archive.</p>
+        <p>This was the difficult part. The camera has no public API and it doesn’t provide a normal web, FTP, RTSP, or ONVIF interface. The first step was to watch what happened when I used the iOS app. It finds the camera on my home network with a UDP broadcast and then opens a direct connection to it. That was useful, but the actual conversation was a proprietary binary protocol. There was no normal address or folder for the Pi to connect to.</p>
+        <p>Instead of trying to recreate the entire protocol, Codex looked at the Android version of the same app and found the manufacturer’s transport library. That library already knew how to authenticate with the camera and exchange messages. Codex built a small compatibility layer so it could run on the Raspberry Pi, then wrote the parts needed to list the recordings, request each JPEG and MP4, check every chunk, retry anything missing, and save complete files to the archive.</p>
+        <p>Getting the files off the camera exposed another problem. Chrome and Android phones could open the MP4s, but iOS could not, and they couldn’t be sent through iMessage. The videos had unusual dimensions and were missing some of the structure and metadata Apple expects from an MP4.</p>
+        <p>To fix that, the Pi runs each video through FFmpeg after it is downloaded. The script creates a separate iPhone-friendly H.264/AAC copy with even dimensions, standard colour and codec settings, and the playback index moved to the beginning of the file. The original from the camera is left untouched, and the converted copy is cached for sharing and downloading.</p>
 
         <h3>What happens each night</h3>
-        <p>The downloader starts at 2:30 a.m. and checks the previous 36 hours. The camera was unreliable if we tried to move too much in one connection, so the Pi opens a new authenticated session for every JPEG and MP4, downloads one file at a time, and waits 30 seconds before the next one. A failed file gets up to three attempts. Files arrive in 1,200-byte chunks; the downloader checks offsets and lengths and asks for missing chunks again.</p>
+        <p>The downloader starts at 2:30 a.m. and downloads the previous day’s worth of files. The camera was unreliable if we tried to move too much in one connection, so the Pi opens a new authenticated session for every JPEG and MP4, downloads one file at a time, and waits 30 seconds before the next one. A failed file gets up to three attempts. Files arrive in 1,200-byte chunks; the downloader checks offsets and lengths and asks for missing chunks again.</p>
         <p>At 6:00 a.m., another job sends the still image paired with each new video to OpenAI. It asks for a species identification and a short fact. The gallery then shows the video, identification, fact, stars, and the summary charts at the top of the page.</p>
 
         <h3>The server</h3>
         <p>This website runs on the same Raspberry Pi 3 in my basement. It connects to the camera and router over Wi-Fi, uses an old iPad charger for power, and backs up the archive to a USB key.</p>
+        <p>I bought the domain through Cloudflare for about $10 a year. The Pi keeps an outgoing Cloudflare Tunnel connection open, and Cloudflare sends visits to the domain through that tunnel to the website running on the Pi. That means I can host the site from my basement without opening a port on my router.</p>
+
+        <h3>Reading the species charts</h3>
+        <p>Each species card at the top of the gallery has a line chart showing when that bird has visited. The horizontal axis runs from midnight to 11 p.m., and the vertical axis shows how many birds were recorded in each one-hour window. Blue is male, pink is female, and gray means the sex couldn’t be determined. Tap or hover over a point to see the exact hour and count. The shaded sections at either end are nighttime, and the row along the bottom shows which months produced the most videos.</p>
+        <p>The charts provide a quick overview of the counts at each time of day for each species. The position of the peaks makes it easy to see that one species tends to arrive early in the morning while another visits later in the day.</p>
+        __SPECIES_CARD__
 
         <h3>Why I’m sharing it</h3>
-        <p>I built this mostly because I was annoyed at being asked to pay $70 every year to download photos from a camera I already owned. It has also been a fun project. I’m putting the code online in case anyone else wants to do something similar.</p>
-      </div>
-    </section>
-
-    <section class="photo-block" aria-labelledby="feeder-photo-title">
-      <figure>
-        __FEEDER_PHOTO__
-      </figure>
-      <div class="photo-caption">
-        <p class="section-label">In the backyard</p>
-        <strong id="feeder-photo-title">The bird feeder camera</strong>
-        <p>The camera is mounted on a pole in the backyard. It saves a JPEG and MP4 for each visit to its microSD card.</p>
+        <p>This has been a labour of love. I built it with Codex, and Codex in turn is built on the work of a great many people: decades of software, research, documentation, and shared ideas. None of this appeared from nowhere. So I’m putting the code online for free, in the same spirit, for anyone who wants to use it, change it, or learn from it. If it also saves somebody $59.99 a year or gives an old Raspberry Pi a job, even better.</p>
       </div>
     </section>
 
@@ -1895,6 +2237,8 @@ __SHARED_STYLES__
         .replace("__FEEDER_PHOTO__", feeder_photo)
         .replace("__PI_PHOTO__", pi_photo)
         .replace("__AMAZON_PHOTO__", amazon_photo)
+        .replace("__SUBSCRIPTION_PHOTO__", subscription_photo)
+        .replace("__SPECIES_CARD__", species_card)
         .replace("__AMAZON_URL__", html.escape(AMAZON_BIRD_FEEDER_URL, quote=True))
         .replace("__GITHUB_URL__", html.escape(GITHUB_REPOSITORY_URL, quote=True))
         .encode("utf-8")
@@ -2104,9 +2448,20 @@ def _render_index(
             else ""
         )
         count_label = "video" if animal.video_count == 1 else "videos"
+        sex_breakdown = _sex_breakdown_markup(
+            animal.male_video_count,
+            animal.female_video_count,
+            animal.unknown_sex_video_count,
+        )
+        escaped_animal_key = html.escape(animal.key, quote=True)
+        activity_label = html.escape(
+            f"{animal.common_name} sightings by hour, sex, and month", quote=True
+        )
         animal_cards.append(
-            '<button class="species-card animal-card" type="button" '
-            f'data-species-filter="{html.escape(animal.key, quote=True)}" '
+            '<div class="species-row species-card-shell animal-card-shell" data-species-row>'
+            '<div class="species-card animal-card" data-active="false">'
+            '<button class="species-card-main" type="button" '
+            f'data-species-filter="{escaped_animal_key}" '
             f'data-species-name="{html.escape(animal.common_name.casefold(), quote=True)}" '
             'data-visitor-kind="animal" '
             f'data-video-count="{animal.video_count}" '
@@ -2121,6 +2476,18 @@ def _render_index(
             f'<span data-species-count-label>{count_label}</span>'
             '</span></span>'
             '</button>'
+            f'<div class="species-card-sex" data-species-sex-breakdown>{sex_breakdown}</div>'
+            '</div>'
+            '<section class="activity-chart animal-activity-chart" data-hourly-activity '
+            f'data-chart-species="{escaped_animal_key}" '
+            f'aria-label="{activity_label}" hidden>'
+            '<div class="activity-plot">'
+            '<svg class="activity-svg" data-hourly-svg role="img"></svg>'
+            '<div class="activity-tooltip" data-hourly-tooltip role="status" hidden></div>'
+            '</div>'
+            '<p class="activity-detail" data-hourly-detail aria-live="polite"></p>'
+            '</section>'
+            '</div>'
         )
 
     if animal_cards:
@@ -2157,9 +2524,8 @@ def _render_index(
 {shared_styles}
     .hero {{ position: relative; overflow: hidden; border-bottom: 1px solid rgb(23 54 43 / 10%); }}
     .hero::after {{
-      position: absolute; inset: -115% -4% auto auto; width: 30rem; aspect-ratio: 1;
-      border: 1px solid rgb(36 121 86 / 14%); border-radius: 50%; content: "";
-      box-shadow: 0 0 0 5rem rgb(36 121 86 / 3%), 0 0 0 10rem rgb(36 121 86 / 2%);
+      position: absolute; inset: -24rem -32rem auto auto; width: 54rem; aspect-ratio: 1.7;
+      border: 1px solid rgb(36 121 86 / 8%); border-radius: 50%; content: "";
     }}
     .site-header {{ position: relative; z-index: 1; display: flex; max-width: 1480px; gap: 24px; align-items: center; justify-content: space-between; margin: 0 auto; padding: 22px 28px 18px; }}
     .site-header > p:first-child {{ margin-bottom: 10px; }}
@@ -2194,6 +2560,9 @@ def _render_index(
     .species-card[data-active="true"] {{ border-color: var(--leaf); background: var(--leaf-pale); box-shadow: 0 0 0 2px rgb(36 121 86 / 13%); }}
     .animal-section {{ border-color: rgb(126 86 48 / 16%); background: rgb(251 247 238 / 78%); }}
     .animal-section .eyebrow, .animal-section .species-card-count b {{ color: #7b512f; }}
+    .animal-grid {{ grid-template-columns: minmax(0, 1fr); }}
+    .animal-card-shell:hover {{ border-color: rgb(126 86 48 / 38%); }}
+    .animal-card-shell:has(.animal-card[data-active="true"]) {{ border-color: #8b603b; background: #f5eadb; box-shadow: 0 0 0 2px rgb(126 86 48 / 13%); }}
     .animal-card:hover {{ border-color: rgb(126 86 48 / 48%); }}
     .animal-card[data-active="true"] {{ border-color: #8b603b; background: #f5eadb; box-shadow: 0 0 0 2px rgb(126 86 48 / 13%); }}
     .species-card-thumbnail {{ position: relative; display: block; width: 76px; aspect-ratio: 1; overflow: hidden; border: 2px solid rgb(255 255 255 / 92%); border-radius: 14px; background: #dfe7dc; box-shadow: 0 2px 8px rgb(27 58 46 / 14%), 0 0 0 1px rgb(23 54 43 / 7%); }}
@@ -2217,11 +2586,11 @@ def _render_index(
     .activity-chart {{ position: relative; width: 100%; max-width: 100%; min-width: 0; min-height: 154px; overflow: hidden; border-left: 1px solid rgb(23 54 43 / 8%); }}
     .activity-plot {{ position: relative; width: 100%; max-width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: linear-gradient(180deg, rgb(247 249 245 / 72%), rgb(255 254 249 / 18%) 70%); }}
     .activity-svg {{ position: absolute; inset: 0; display: block; width: 100%; max-width: 100%; height: 100%; overflow: hidden; }}
-    .activity-night rect {{ fill: rgb(76 88 110 / 9%); }}
     .activity-daypart-icon {{ fill: #66776f; opacity: .52; }}
     .activity-grid line {{ stroke: rgb(23 54 43 / 9%); stroke-width: 1; }}
     .activity-grid text, .activity-x-axis text {{ fill: #77837d; font-size: 10.5px; }}
     .activity-month-cell {{ fill: #315a48; }}
+    .animal-activity-chart .activity-month-cell {{ fill: #8b603b; }}
     .activity-month-label {{ fill: #425149; font-size: 9.5px; font-weight: 650; pointer-events: none; }}
     .activity-month-label[data-on-dark="true"] {{ fill: #fffef9; }}
     .activity-series {{ opacity: 1; }}
@@ -2338,7 +2707,7 @@ def _render_index(
       .activity-chart {{ min-height: 0; border-top: 0; border-left: 0; padding-left: 0; }}
     }}
     @media (max-width: 560px) {{
-      .hero::after {{ inset: -65% -60% auto auto; width: 24rem; }}
+      .hero::after {{ inset: -15rem -20rem auto auto; width: 38rem; aspect-ratio: 1.7; }}
       .site-header {{ padding: 20px 18px 16px; }}
       .site-links a {{ min-height: 38px; padding: 7px 12px; font-size: .88rem; }}
       h1 {{ font-size: clamp(2.5rem, 13vw, 3.7rem); }}
@@ -2381,15 +2750,15 @@ def _render_index(
         <div class="species-section-actions">
           <button class="clear-species" type="button" data-clear-species data-visitor-kind="bird" hidden>Show all videos</button>
           <button class="section-toggle" type="button" data-section-toggle
-            data-section-label="Birds we’ve seen" aria-expanded="true"
-            aria-controls="species-section-content" aria-label="Collapse Birds we’ve seen">
+            data-section-label="Birds we’ve seen" aria-expanded="false"
+            aria-controls="species-section-content" aria-label="Expand Birds we’ve seen">
             <svg aria-hidden="true" viewBox="0 0 16 16" fill="none"
               stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
               stroke-linejoin="round"><path d="m4 6 4 4 4-4"/></svg>
           </button>
         </div>
       </div>
-      <div id="species-section-content" data-section-content>
+      <div id="species-section-content" data-section-content hidden>
         {species_content}
       </div>
     </section>
@@ -2402,15 +2771,15 @@ def _render_index(
         <div class="species-section-actions">
           <button class="clear-species" type="button" data-clear-species data-visitor-kind="animal" hidden>Show all animal videos</button>
           <button class="section-toggle" type="button" data-section-toggle
-            data-section-label="Other feeder visitors" aria-expanded="true"
-            aria-controls="animal-section-content" aria-label="Collapse Other feeder visitors">
+            data-section-label="Other feeder visitors" aria-expanded="false"
+            aria-controls="animal-section-content" aria-label="Expand Other feeder visitors">
             <svg aria-hidden="true" viewBox="0 0 16 16" fill="none"
               stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
               stroke-linejoin="round"><path d="m4 6 4 4 4-4"/></svg>
           </button>
         </div>
       </div>
-      <div id="animal-section-content" data-section-content>
+      <div id="animal-section-content" data-section-content hidden>
         {animal_content}
       </div>
     </section>
@@ -2525,9 +2894,60 @@ def _render_watch(
     identity_kicker = "Visitor" if pair.common_name else "Capture"
     next_video = ""
     next_script = ""
+    player_sizing_script = """
+<script>
+  (() => {
+    const video = document.querySelector("[data-watch-video]");
+    const player = video?.closest("[data-video-player]");
+    if (!video || !player) return;
+
+    let resizeFrame = null;
+    const fitPlayerToVideo = () => {
+      if (!video.videoWidth || !video.videoHeight) return;
+
+      const aspectRatio = video.videoWidth / video.videoHeight;
+      player.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+
+      // Measure the full grid track before applying the height-aware width.
+      // Capping the video element's height while leaving its frame full-width
+      // is what creates letterboxing in Safari.
+      player.style.removeProperty("width");
+      const availableWidth = player.getBoundingClientRect().width;
+      const viewportHeight = window.innerHeight;
+      const maximumHeight = window.matchMedia("(max-width: 980px)").matches
+        ? viewportHeight * 0.68
+        : viewportHeight - 104;
+      const fittedWidth = Math.min(
+        availableWidth,
+        Math.max(1, maximumHeight) * aspectRatio
+      );
+      player.style.width = `${fittedWidth}px`;
+    };
+    const schedulePlayerFit = () => {
+      if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = null;
+        fitPlayerToVideo();
+      });
+    };
+
+    video.addEventListener("loadedmetadata", fitPlayerToVideo);
+    window.addEventListener("resize", schedulePlayerFit);
+    window.visualViewport?.addEventListener("resize", schedulePlayerFit);
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) fitPlayerToVideo();
+  })();
+</script>
+"""
     if next_pair is not None and next_pair.video_path is not None:
         next_url = _watch_url(next_pair.video_path) + "?autoplay=1"
         next_title = next_pair.common_name or "Species pending"
+        next_sex = {
+            "male": "Male",
+            "female": "Female",
+            "indeterminate": "Unknown sex",
+        }.get(next_pair.sex or "")
+        if (next_pair.is_bird or _is_animal_visitor(next_pair)) and next_sex:
+            next_title = f"{next_title} · {next_sex}"
         next_subtitle = f"{next_pair.date_label} · {next_pair.time_label}"
         next_video = (
             '<aside class="next-video" data-next-video '
@@ -2537,7 +2957,7 @@ def _render_watch(
             f'<strong>{html.escape(next_title)}</strong>'
             f'<small>{html.escape(next_subtitle)}</small>'
             '</div>'
-            '<p>Playing in <strong data-countdown>10</strong></p>'
+            '<p>Playing in <strong data-countdown>5</strong></p>'
             '<div class="next-video-progress" aria-hidden="true">'
             '<span data-countdown-bar></span></div>'
             '<div class="next-video-actions">'
@@ -2553,7 +2973,7 @@ def _render_watch(
     const video = document.querySelector("[data-watch-video]");
     if (!video) return;
 
-    const countdownSeconds = 10;
+    const countdownSeconds = 5;
     let countdownRemaining = countdownSeconds;
     let countdownTimer = null;
     let countdownDeadline = null;
@@ -2735,19 +3155,19 @@ def _render_watch(
     .watch-capture-label {{ margin: 0; color: var(--leaf); font-size: .9rem; font-weight: 750; }}
     .watch-layout {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 330px); gap: 18px; align-items: stretch; }}
     .watch-scientific {{ margin: 5px 0 0; color: var(--muted); font-size: .93rem; }}
-    .player {{ position: relative; overflow: hidden; border: 1px solid rgb(255 255 255 / 10%); border-radius: 24px; background: #09140f; box-shadow: 0 24px 60px rgb(15 43 32 / 22%); }}
-    video {{ display: block; width: 100%; max-height: calc(100vh - 104px); background: #09140f; }}
-    .next-video {{ position: absolute; right: 18px; bottom: 18px; width: min(330px, calc(100% - 36px)); padding: 18px; border: 1px solid rgb(255 255 255 / 28%); border-radius: 16px; color: #fff; background: rgb(9 20 15 / 78%); box-shadow: 0 16px 42px rgb(0 0 0 / 32%); backdrop-filter: blur(22px) saturate(130%); }}
+    .player {{ position: relative; width: 100%; align-self: start; justify-self: center; overflow: hidden; border: 1px solid rgb(255 255 255 / 10%); border-radius: 24px; background: #09140f; box-shadow: 0 24px 60px rgb(15 43 32 / 22%); }}
+    video {{ display: block; width: 100%; height: 100%; object-fit: cover; background: #09140f; }}
+    .next-video {{ position: absolute; right: 16px; bottom: 16px; width: min(290px, calc(100% - 32px)); padding: 14px; border: 1px solid rgb(255 255 255 / 28%); border-radius: 14px; color: #fff; background: rgb(9 20 15 / 78%); box-shadow: 0 14px 34px rgb(0 0 0 / 30%); backdrop-filter: blur(22px) saturate(130%); }}
     .next-video[hidden] {{ display: none; }}
     .next-video-copy {{ display: grid; gap: 2px; }}
     .next-video-copy span {{ color: #b9d7c9; font-size: .72rem; font-weight: 800; text-transform: uppercase; }}
-    .next-video-copy strong {{ font-size: 1.12rem; }}
+    .next-video-copy strong {{ font-size: 1.02rem; }}
     .next-video-copy small {{ color: #d7e6de; }}
-    .next-video > p {{ margin: 14px 0 7px; }}
-    .next-video-progress {{ height: 4px; margin-bottom: 12px; overflow: hidden; border-radius: 999px; background: rgb(255 255 255 / 20%); }}
+    .next-video > p {{ margin: 10px 0 6px; font-size: .92rem; }}
+    .next-video-progress {{ height: 3px; margin-bottom: 10px; overflow: hidden; border-radius: 999px; background: rgb(255 255 255 / 20%); }}
     .next-video-progress span {{ display: block; width: 100%; height: 100%; border-radius: inherit; background: #b9d7c9; transform: scaleX(1); transform-origin: left center; transition: transform 1s linear; }}
     .next-video-actions {{ display: flex; gap: 8px; }}
-    .next-video-actions button {{ flex: 1; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 8px 12px; border: 1px solid rgb(255 255 255 / 24%); border-radius: 999px; color: #fff; background: transparent; font: inherit; font-weight: 800; cursor: pointer; }}
+    .next-video-actions button {{ flex: 1; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; padding: 7px 10px; border: 1px solid rgb(255 255 255 / 24%); border-radius: 999px; color: #fff; background: transparent; font: inherit; font-size: .92rem; font-weight: 800; cursor: pointer; }}
     .next-video-actions .play-next-button {{ color: #10281e; background: #fff; }}
     .gallery-nav {{ position: fixed; z-index: 4; top: 50%; display: grid; width: 48px; height: 64px; place-items: center; border: 1px solid rgb(23 54 43 / 14%); border-radius: 999px; color: var(--ink); background: rgb(255 254 249 / 88%); box-shadow: 0 12px 30px rgb(15 43 32 / 18%); font-size: 2.5rem; line-height: 1; text-decoration: none; transform: translateY(-50%); backdrop-filter: blur(10px); }}
     .gallery-nav:hover, .gallery-nav:focus {{ color: #fff; border-color: var(--leaf); background: var(--leaf); }}
@@ -2779,7 +3199,6 @@ def _render_watch(
     @media (max-width: 980px) {{
       .watch-shell {{ width: min(1160px, 100%); }}
       .watch-layout {{ grid-template-columns: 1fr; }}
-      video {{ max-height: 68vh; }}
       .watch-info {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px 28px; padding: 20px; }}
       .watch-identity, .watch-info .classification {{ grid-column: 1; }}
       .watch-actions {{ grid-column: 2; grid-row: 1 / span 2; align-self: end; min-width: 300px; padding-top: 0; }}
@@ -2790,7 +3209,7 @@ def _render_watch(
       .watch-capture-label {{ font-size: .8rem; }}
       .watch-header .back-button {{ min-height: 38px; padding: 7px 11px; font-size: .88rem; }}
       .player {{ border-radius: 16px; }}
-      .next-video {{ right: 10px; bottom: 10px; width: calc(100% - 20px); padding: 14px; }}
+      .next-video {{ right: 10px; bottom: 10px; width: min(290px, calc(100% - 20px)); }}
       .watch-info {{ display: flex; padding: 18px 15px; border-radius: 16px; }}
       .watch-info .classification-notes {{ grid-template-columns: 1fr; }}
       .watch-actions {{ width: 100%; padding-top: 18px; }}
@@ -2808,7 +3227,7 @@ def _render_watch(
       <a class="back-button" href="/">← Back to gallery</a>
     </header>
     <div class="watch-layout">
-      <div class="player">
+      <div class="player" data-video-player>
         <video controls playsinline preload="metadata" data-watch-video{autoplay_attribute}{poster}>
           <source src="{media_url}" type="video/mp4">
           Your browser does not support HTML video.
@@ -2830,6 +3249,7 @@ def _render_watch(
     </div>
   </main>
 {script}
+{player_sizing_script}
 {next_script}
 </body>
 </html>
@@ -2849,6 +3269,7 @@ def _render_watch(
         star_button=_star_button(pair, large=True),
         share_button=_share_button(pair, location=share_location, preload=True),
         script=_shared_script(csrf_token, deletes_enabled=not public_read_only),
+        player_sizing_script=player_sizing_script,
         next_script=next_script,
     )
     return document.encode("utf-8")
@@ -2933,6 +3354,7 @@ def make_handler(
     about_photo_path = Path(__file__).with_name("about-feeder.jpg")
     about_pi_photo_path = Path(__file__).with_name("about-raspberry-pi.jpg")
     about_amazon_photo_path = Path(__file__).with_name("about-amazon.png")
+    about_subscription_photo_path = Path(__file__).with_name("about-subscription.jpg")
     csrf_token = secrets.token_urlsafe(32)
     phone_videos = mobile_preparer or MobileVideoPreparer(root)
     host_allowlist = {
@@ -2973,6 +3395,8 @@ def make_handler(
                         photo_available=about_photo_path.is_file(),
                         pi_photo_available=about_pi_photo_path.is_file(),
                         amazon_photo_available=about_amazon_photo_path.is_file(),
+                        subscription_photo_available=about_subscription_photo_path.is_file(),
+                        pairs=list_pairs(root, ensure_schema=not public_read_only),
                     ),
                     "text/html; charset=utf-8",
                 )
@@ -2993,6 +3417,12 @@ def make_handler(
                     HTTPStatus.OK,
                     about_amazon_photo_path.read_bytes(),
                     "image/png",
+                )
+            elif path == "/about-subscription.jpg" and about_subscription_photo_path.is_file():
+                self._send_bytes(
+                    HTTPStatus.OK,
+                    about_subscription_photo_path.read_bytes(),
+                    "image/jpeg",
                 )
             elif path == "/api/media":
                 if public_read_only:

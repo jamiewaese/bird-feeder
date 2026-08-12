@@ -8,10 +8,18 @@ import os
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 
-from camera.sdcard import FilesystemMediaSource, MediaImporter
+from camera.sdcard import FilesystemMediaSource, ImportResult, MediaImporter
+
+
+NATIVE_PRESENT = 0
+NATIVE_DOWNLOADED = 10
+NATIVE_END_OF_EVENTS = 11
+MAX_EVENTS = 240
+SESSION_DELAY_SECONDS = 30
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,6 +31,70 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--camera-id", default="yard")
     parser.add_argument("--lookback-hours", type=int, default=36)
     return parser
+
+
+def download_events(
+    *,
+    executable: Path,
+    transport: Path,
+    staging: Path,
+    existing_root: Path,
+    lookback_hours: int,
+    environment: dict[str, str],
+    run=subprocess.run,
+    sleep=time.sleep,
+    after_download: Callable[[], None] | None = None,
+) -> bool:
+    """Download every reported event, returning whether any file failed.
+
+    A single corrupt or lossy camera file must not prevent newer visits from
+    being attempted. Existing files need no cooldown; retain the conservative
+    delay only after retries and real transfers.
+    """
+
+    native_failed = False
+    event_index = 0
+    while event_index < MAX_EVENTS:
+        event_exists = True
+        for file_type in (2, 1):
+            command = [
+                str(executable),
+                str(transport),
+                str(staging),
+                str(existing_root),
+                str(lookback_hours),
+                str(event_index),
+                str(file_type),
+            ]
+            returncode = 1
+            for attempt in range(3):
+                native = run(command, env=environment, check=False)
+                returncode = native.returncode
+                if returncode in {
+                    NATIVE_PRESENT,
+                    NATIVE_DOWNLOADED,
+                    NATIVE_END_OF_EVENTS,
+                }:
+                    break
+                if attempt < 2:
+                    sleep(SESSION_DELAY_SECONDS)
+
+            if returncode == NATIVE_END_OF_EVENTS:
+                event_exists = False
+                break
+            if returncode not in {NATIVE_PRESENT, NATIVE_DOWNLOADED}:
+                native_failed = True
+                continue
+            if returncode == NATIVE_DOWNLOADED:
+                if after_download is not None:
+                    after_download()
+                sleep(SESSION_DELAY_SECONDS)
+
+        if not event_exists:
+            break
+        event_index += 1
+
+    return native_failed
 
 
 def main() -> int:
@@ -49,41 +121,42 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix=".ubox-", dir=incoming) as staging_name:
         staging = Path(staging_name)
-        native_failed = False
-        event_index = 0
-        while event_index < 240:
-            event_exists = True
-            for file_type in (2, 1):
-                command = [
-                    str(executable),
-                    str(transport),
-                    str(staging),
-                    str(library / "media" / args.camera_id),
-                    str(args.lookback_hours),
-                    str(event_index),
-                    str(file_type),
-                ]
-                returncode = 1
-                for attempt in range(3):
-                    native = subprocess.run(command, env=environment, check=False)
-                    returncode = native.returncode
-                    if returncode in {0, 10, 11}:
-                        break
-                    if attempt < 2:
-                        time.sleep(30)
-                if returncode == 11:
-                    event_exists = False
-                    break
-                if returncode not in {0, 10}:
-                    native_failed = True
-                    break
-                time.sleep(30)
-            if native_failed or not event_exists:
-                break
-            event_index += 1
+        import_results: list[ImportResult] = []
 
-        source = FilesystemMediaSource(staging, source_id=args.camera_id)
-        imported = MediaImporter(library).sync(source)
+        def import_staging() -> None:
+            source = FilesystemMediaSource(
+                staging,
+                source_id=args.camera_id,
+                delete_suppressed=True,
+            )
+            import_results.append(MediaImporter(library).sync(source))
+
+        native_failed = download_events(
+            executable=executable,
+            transport=transport,
+            staging=staging,
+            existing_root=library / "media" / args.camera_id,
+            lookback_hours=args.lookback_hours,
+            environment=environment,
+            after_download=import_staging,
+        )
+
+        source = FilesystemMediaSource(
+            staging,
+            source_id=args.camera_id,
+            delete_suppressed=True,
+        )
+        final_import = MediaImporter(library).sync(source)
+        imported = ImportResult(
+            discovered=final_import.discovered,
+            imported=sum(result.imported for result in import_results)
+            + final_import.imported,
+            unchanged=final_import.unchanged,
+            suppressed=final_import.suppressed,
+            pending=final_import.pending,
+            failed=sum(result.failed for result in import_results)
+            + final_import.failed,
+        )
         print(json.dumps(asdict(imported), indent=2, sort_keys=True))
 
     if imported.failed or native_failed:
